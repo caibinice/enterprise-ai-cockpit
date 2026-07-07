@@ -4,15 +4,15 @@
       <div class="brand">
         <span class="logo">AI</span>
         <div>
-          <strong>??????</strong>
-          <small>Spring AI + Vue 3</small>
+          <strong>Enterprise AI Cockpit</strong>
+          <small>Spring Boot + Vue 3</small>
         </div>
       </div>
       <el-menu :default-active="active" class="menu" @select="active = $event">
-        <el-menu-item index="cockpit">??????</el-menu-item>
-        <el-menu-item index="knowledge">?????</el-menu-item>
-        <el-menu-item index="reports">??????</el-menu-item>
-        <el-menu-item index="settings">MCP / ????</el-menu-item>
+        <el-menu-item index="cockpit">AI Cockpit Chat</el-menu-item>
+        <el-menu-item index="knowledge">Knowledge Base</el-menu-item>
+        <el-menu-item index="reports">Data & Reports</el-menu-item>
+        <el-menu-item index="settings">MCP / Speech</el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -20,12 +20,12 @@
       <el-header class="topbar">
         <div>
           <h1>{{ pageTitle }}</h1>
-          <p>?????????????????????????? MVP</p>
+          <p>Enterprise knowledge-base chat, dynamic reports, tools, and speech integration MVP.</p>
         </div>
         <el-space>
           <el-tag type="success">{{ health?.status ?? 'loading' }}</el-tag>
           <el-tag>{{ health?.mode ?? 'mock' }}</el-tag>
-          <el-button @click="refreshAll">??</el-button>
+          <el-button @click="refreshAll">Refresh</el-button>
         </el-space>
       </el-header>
 
@@ -33,26 +33,26 @@
         <section v-if="active === 'cockpit'" class="grid cockpit-grid">
           <el-card class="chat-card">
             <template #header>
-              <div class="card-head"><span>?? RAG ??</span><el-switch v-model="chat.enableChart" active-text="????" /></div>
+              <div class="card-head"><span>Streaming RAG Chat</span><el-switch v-model="chat.enableChart" active-text="Chart" /></div>
             </template>
             <div class="messages">
               <div v-for="(m, i) in messages" :key="i" :class="['message', m.role]">
-                <strong>{{ m.role === 'user' ? '?' : '????' }}</strong>
+                <strong>{{ m.role === 'user' ? 'You' : 'Assistant' }}</strong>
                 <p>{{ m.content }}</p>
               </div>
             </div>
             <el-form @submit.prevent="sendChat" class="ask">
-              <el-select v-model="chat.knowledgeBaseIds" multiple placeholder="?????" style="width: 280px">
+              <el-select v-model="chat.knowledgeBaseIds" multiple placeholder="Select KB" style="width: 280px">
                 <el-option v-for="kb in knowledgeBases" :key="kb.id" :label="kb.name" :value="kb.id" />
               </el-select>
-              <el-input v-model="chat.message" placeholder="?????????????????" clearable @keyup.enter="sendChat" />
-              <el-button :loading="loading.chat" type="primary" @click="sendChat">??</el-button>
-              <el-button @click="mockVoiceInput">????</el-button>
+              <el-input v-model="chat.message" placeholder="Ask for a sales chart from the knowledge base" clearable @keyup.enter="sendChat" />
+              <el-button :loading="loading.chat" type="primary" @click="sendChat">Send</el-button>
+              <el-button @click="mockVoiceInput">Voice Input</el-button>
             </el-form>
           </el-card>
 
           <el-card>
-            <template #header>???? / ????</template>
+            <template #header>Dynamic Chart / References</template>
             <div ref="chartRef" class="chart"></div>
             <el-divider />
             <el-collapse v-if="references.length">
@@ -61,46 +61,46 @@
                 <el-tag v-for="(v, k) in ref.metadata" :key="k" class="meta">{{ k }}={{ v }}</el-tag>
               </el-collapse-item>
             </el-collapse>
-            <el-empty v-else description="??????" />
-            <el-button :disabled="!lastAssistant" class="speak" @click="speak">????</el-button>
+            <el-empty v-else description="No references yet" />
+            <el-button :disabled="!lastAssistant" class="speak" @click="speak">Speak Answer</el-button>
           </el-card>
         </section>
 
         <section v-else-if="active === 'knowledge'" class="grid">
           <el-card>
-            <template #header>???</template>
+            <template #header>Knowledge Bases</template>
             <el-form label-position="top">
-              <el-form-item label="??"><el-input v-model="kbForm.name" /></el-form-item>
-              <el-form-item label="??"><el-input v-model="kbForm.code" /></el-form-item>
-              <el-form-item label="??"><el-input v-model="kbForm.description" type="textarea" /></el-form-item>
-              <el-button type="primary" @click="createKnowledgeBase">?????</el-button>
+              <el-form-item label="Name"><el-input v-model="kbForm.name" /></el-form-item>
+              <el-form-item label="Code"><el-input v-model="kbForm.code" /></el-form-item>
+              <el-form-item label="Description"><el-input v-model="kbForm.description" type="textarea" /></el-form-item>
+              <el-button type="primary" @click="createKnowledgeBase">Create KB</el-button>
             </el-form>
             <el-table :data="knowledgeBases" class="table">
-              <el-table-column prop="name" label="??" />
-              <el-table-column prop="code" label="??" />
-              <el-table-column prop="documentCount" label="???" width="90" />
+              <el-table-column prop="name" label="Name" />
+              <el-table-column prop="code" label="Code" />
+              <el-table-column prop="documentCount" label="Docs" width="90" />
             </el-table>
           </el-card>
 
           <el-card>
-            <template #header>????? Metadata</template>
+            <template #header>Import Documents & Metadata</template>
             <el-form label-position="top">
-              <el-form-item label="?????">
-                <el-select v-model="upload.knowledgeBaseId" placeholder="?????">
+              <el-form-item label="Target KB">
+                <el-select v-model="upload.knowledgeBaseId" placeholder="Select KB">
                   <el-option v-for="kb in knowledgeBases" :key="kb.id" :label="kb.name" :value="kb.id" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="??????"><el-input v-model="upload.title" placeholder="????" /><el-input v-model="upload.content" type="textarea" rows="4" placeholder="????" /></el-form-item>
-              <el-form-item label="Metadata(JSON)"><el-input v-model="upload.metadata" placeholder='{"category":"sales","region":"east"}' /></el-form-item>
-              <el-button type="primary" @click="importText">????</el-button>
+              <el-form-item label="Quick Text Import"><el-input v-model="upload.title" placeholder="Document title" /><el-input v-model="upload.content" type="textarea" :rows="4" placeholder="Document content" /></el-form-item>
+              <el-form-item label="Metadata JSON"><el-input v-model="upload.metadata" placeholder='{"category":"sales","region":"east"}' /></el-form-item>
+              <el-button type="primary" @click="importText">Import Text</el-button>
             </el-form>
             <el-upload :auto-upload="false" multiple :on-change="onFileChange" class="uploader">
-              <el-button>?? PDF/Word/Excel/Markdown/CSV</el-button>
+              <el-button>Select PDF/Word/Excel/Markdown/CSV</el-button>
             </el-upload>
-            <el-button :disabled="!files.length" @click="uploadFiles">????</el-button>
+            <el-button :disabled="!files.length" @click="uploadFiles">Batch Upload</el-button>
             <el-table :data="documents" class="table">
-              <el-table-column prop="title" label="??" />
-              <el-table-column prop="chunks" label="??" width="80" />
+              <el-table-column prop="title" label="Document" />
+              <el-table-column prop="chunks" label="Chunks" width="80" />
               <el-table-column label="Metadata"><template #default="s"><el-tag v-for="(v,k) in s.row.metadata" :key="k" class="meta">{{ k }}={{ v }}</el-tag></template></el-table-column>
             </el-table>
           </el-card>
@@ -108,52 +108,52 @@
 
         <section v-else-if="active === 'reports'" class="grid">
           <el-card>
-            <template #header>???</template>
+            <template #header>Data Sources</template>
             <el-form label-position="top">
-              <el-form-item label="??"><el-input v-model="dsForm.name" /></el-form-item>
-              <el-form-item label="??"><el-select v-model="dsForm.type"><el-option label="HTTP API" value="HTTP" /><el-option label="JDBC ???" value="JDBC" /><el-option label="??/??" value="FILE" /></el-select></el-form-item>
-              <el-form-item label="??/???"><el-input v-model="dsForm.endpoint" /></el-form-item>
-              <el-form-item label="SQL/API ??"><el-input v-model="dsForm.queryText" type="textarea" /></el-form-item>
-              <el-button type="primary" @click="createDataSource">?????</el-button>
+              <el-form-item label="Name"><el-input v-model="dsForm.name" /></el-form-item>
+              <el-form-item label="Type"><el-select v-model="dsForm.type"><el-option label="HTTP API" value="HTTP" /><el-option label="JDBC Database" value="JDBC" /><el-option label="File" value="FILE" /></el-select></el-form-item>
+              <el-form-item label="Endpoint"><el-input v-model="dsForm.endpoint" /></el-form-item>
+              <el-form-item label="SQL/API Params"><el-input v-model="dsForm.queryText" type="textarea" /></el-form-item>
+              <el-button type="primary" @click="createDataSource">Save Data Source</el-button>
             </el-form>
-            <el-table :data="dataSources" class="table"><el-table-column prop="name" label="??" /><el-table-column prop="type" label="??" /><el-table-column prop="endpoint" label="??" /></el-table>
+            <el-table :data="dataSources" class="table"><el-table-column prop="name" label="Name" /><el-table-column prop="type" label="Type" /><el-table-column prop="endpoint" label="Endpoint" /></el-table>
           </el-card>
 
           <el-card>
-            <template #header>????</template>
+            <template #header>Scheduled Reports</template>
             <el-form label-position="top">
-              <el-form-item label="????"><el-input v-model="reportForm.name" /></el-form-item>
+              <el-form-item label="Report Name"><el-input v-model="reportForm.name" /></el-form-item>
               <el-form-item label="Cron"><el-input v-model="reportForm.cron" /></el-form-item>
-              <el-form-item label="??? Key"><el-input v-model="reportForm.dataSourceKey" /></el-form-item>
-              <el-form-item label="?????"><el-select v-model="reportForm.knowledgeBaseId"><el-option v-for="kb in knowledgeBases" :key="kb.id" :label="kb.name" :value="kb.id" /></el-select></el-form-item>
-              <el-form-item label="???"><el-input v-model="reportForm.prompt" type="textarea" /></el-form-item>
-              <el-form-item label="????"><el-input v-model="reportForm.dimensions" /></el-form-item>
-              <el-button type="primary" @click="createReportTemplate">????</el-button>
+              <el-form-item label="Data Source Key"><el-input v-model="reportForm.dataSourceKey" /></el-form-item>
+              <el-form-item label="Target KB"><el-select v-model="reportForm.knowledgeBaseId"><el-option v-for="kb in knowledgeBases" :key="kb.id" :label="kb.name" :value="kb.id" /></el-select></el-form-item>
+              <el-form-item label="Prompt"><el-input v-model="reportForm.prompt" type="textarea" /></el-form-item>
+              <el-form-item label="Dimensions"><el-input v-model="reportForm.dimensions" /></el-form-item>
+              <el-button type="primary" @click="createReportTemplate">Save Template</el-button>
             </el-form>
             <el-table :data="reportTemplates" class="table">
-              <el-table-column prop="name" label="??" />
+              <el-table-column prop="name" label="Template" />
               <el-table-column prop="cron" label="Cron" />
-              <el-table-column width="120" label="??"><template #default="s"><el-button size="small" @click="runReport(s.row.id)">??</el-button></template></el-table-column>
+              <el-table-column width="120" label="Action"><template #default="s"><el-button size="small" @click="runReport(s.row.id)">Run</el-button></template></el-table-column>
             </el-table>
             <el-divider />
-            <el-table :data="reportRuns" class="table"><el-table-column prop="name" label="??" /><el-table-column prop="status" label="??" /><el-table-column prop="createdAt" label="??" /></el-table>
+            <el-table :data="reportRuns" class="table"><el-table-column prop="name" label="Report" /><el-table-column prop="status" label="Status" /><el-table-column prop="createdAt" label="Time" /></el-table>
           </el-card>
         </section>
 
         <section v-else class="grid">
           <el-card>
             <template #header>MCP Tool Calling</template>
-            <el-alert type="info" show-icon :closable="false" title="????? Spring AI MCP Client starter???????????????????????????????????" />
+            <el-alert type="info" show-icon :closable="false" title="Spring AI MCP Client starter is reserved. Use real-time tools for short read-only calls; precompute slow reports into the vector knowledge base." />
             <el-descriptions :column="1" border class="table">
-              <el-descriptions-item label="????">????????????????</el-descriptions-item>
-              <el-descriptions-item label="?? MCP">?? application.yml / ?????? STDIO?SSE ? Streamable HTTP MCP Server</el-descriptions-item>
+              <el-descriptions-item label="Internal Tools">Report lookup, data-source snapshot, safe short query</el-descriptions-item>
+              <el-descriptions-item label="External MCP">Configure STDIO, SSE, or Streamable HTTP MCP servers through application.yml / environment variables</el-descriptions-item>
             </el-descriptions>
           </el-card>
           <el-card>
-            <template #header>???????</template>
-            <p>?? MVP ???? mock-openai-compatible Provider????? ASR/TTS ??????? SpeechService Provider?</p>
-            <el-input v-model="ttsText" type="textarea" rows="4" placeholder="????????" />
-            <el-button class="table" @click="speakText(ttsText)">?????</el-button>
+            <template #header>Speech Recognition & TTS</template>
+            <p>The MVP uses a mock-openai-compatible provider. Replace SpeechService provider for real ASR/TTS.</p>
+            <el-input v-model="ttsText" type="textarea" :rows="4" placeholder="Text to speak" />
+            <el-button class="table" @click="speakText(ttsText)">Generate & Play</el-button>
           </el-card>
         </section>
       </el-main>
@@ -187,16 +187,16 @@ const references = ref<Reference[]>([]);
 const messages = ref<{ role: 'user' | 'assistant'; content: string }[]>([]);
 const files = ref<File[]>([]);
 const chartRef = ref<HTMLDivElement>();
-const ttsText = ref('??????????');
+const ttsText = ref('Welcome to Enterprise AI Cockpit');
 const loading = reactive({ chat: false });
 
-const kbForm = reactive({ name: '?????', code: 'DEFAULT', description: '????????????' });
-const upload = reactive({ knowledgeBaseId: 0, title: '????', content: 'East sales amount is 120 and South sales amount is 95.', metadata: '{"category":"sales"}' });
+const kbForm = reactive({ name: 'Enterprise KB', code: 'DEFAULT', description: 'Enterprise policies, metrics, and reports' });
+const upload = reactive({ knowledgeBaseId: 0, title: 'Sales Daily', content: 'East sales amount is 120 and South sales amount is 95.', metadata: '{"category":"sales"}' });
 const chat = reactive({ conversationId: '', message: 'Generate a sales chart', knowledgeBaseIds: [] as number[], enableTools: true, enableChart: true });
 const dsForm = reactive({ name: 'Mock Sales API', type: 'HTTP', endpoint: 'https://example.com/sales', queryText: 'GET /sales?period=today' });
 const reportForm = reactive({ name: 'Sales Daily', scheduleType: 'CRON', cron: '0 0 9 * * ?', dataSourceKey: 'mock-sales', knowledgeBaseId: 0, prompt: 'Analyze sales trend', dimensions: 'region,amount', enabled: true });
 
-const pageTitle = computed(() => ({ cockpit: '??????', knowledge: '?????', reports: '??????', settings: 'MCP / ????' }[active.value]));
+const pageTitle = computed(() => ({ cockpit: 'AI Cockpit Chat', knowledge: 'Knowledge Base', reports: 'Data & Reports', settings: 'MCP / Speech' }[active.value]));
 const lastAssistant = computed(() => [...messages.value].reverse().find(m => m.role === 'assistant')?.content ?? '');
 
 async function refreshAll() {
@@ -216,13 +216,13 @@ function parseJsonMap(text: string) {
 
 async function createKnowledgeBase() {
   await api('/admin/knowledge-bases', { method: 'POST', body: JSON.stringify(kbForm) });
-  ElMessage.success('??????');
+  ElMessage.success('Knowledge base created');
   await refreshAll();
 }
 
 async function importText() {
   await api('/admin/documents/text?knowledgeBaseId=' + upload.knowledgeBaseId, { method: 'POST', body: JSON.stringify({ title: upload.title, content: upload.content, metadata: parseJsonMap(upload.metadata) }) });
-  ElMessage.success('?????');
+  ElMessage.success('Document imported');
   await refreshAll();
 }
 
@@ -234,7 +234,7 @@ async function uploadFiles() {
   files.value.forEach(f => form.append('files', f));
   await api('/admin/documents/batch-upload', { method: 'POST', body: form });
   files.value = [];
-  ElMessage.success('??????');
+  ElMessage.success('Batch upload completed');
   await refreshAll();
 }
 
@@ -242,13 +242,16 @@ async function sendChat() {
   if (!chat.message.trim()) return;
   loading.chat = true;
   messages.value.push({ role: 'user', content: chat.message });
-  const assistant = { role: 'assistant' as const, content: '' };
-  messages.value.push(assistant);
+  const assistantIndex = messages.value.length;
+  messages.value.push({ role: 'assistant', content: '' });
   references.value = [];
   try {
     await streamChat({ ...chat, metadataFilter: {}, knowledgeBaseIds: chat.knowledgeBaseIds.length ? chat.knowledgeBaseIds : knowledgeBases.value.map(k => k.id) }, async msg => {
       if (msg.event === 'meta') chat.conversationId = JSON.parse(msg.data).conversationId;
-      if (msg.event === 'token') assistant.content += msg.data;
+      if (msg.event === 'token') {
+        const current = messages.value[assistantIndex];
+        messages.value[assistantIndex] = { ...current, content: current.content + msg.data };
+      }
       if (msg.event === 'references') references.value = JSON.parse(msg.data);
       if (msg.event === 'chart') renderChart(JSON.parse(msg.data));
       if (msg.event === 'error') ElMessage.error(msg.data);
@@ -271,7 +274,7 @@ async function runReport(id: number) { const run = await api<ReportRun>(`/admin/
 async function speak() { await speakText(lastAssistant.value); }
 async function speakText(text: string) {
   const res = await api<{ audioUrl: string }>('/speech/synthesize', { method: 'POST', body: JSON.stringify({ text }) });
-  new Audio(res.audioUrl).play().catch(() => ElMessage.info('???????????????????'));
+  new Audio(res.audioUrl).play().catch(() => ElMessage.info('Browser blocked autoplay. Allow audio playback manually.'));
 }
 async function mockVoiceInput() {
   const fd = new FormData();

@@ -9,16 +9,18 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },
   "dependencies": {
-    "@vitejs/plugin-vue": "latest",
-    "vite": "latest",
-    "typescript": "latest",
-    "vue": "latest",
-    "vue-tsc": "latest",
-    "vue-router": "latest",
-    "pinia": "latest",
-    "element-plus": "latest",
     "@element-plus/icons-vue": "latest",
-    "echarts": "latest"
+    "@vitejs/plugin-vue": "latest",
+    "echarts": "latest",
+    "element-plus": "latest",
+    "pinia": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vue": "latest",
+    "vue-router": "latest",
+    "vue-tsc": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
 }
