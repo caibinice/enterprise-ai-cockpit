@@ -23,32 +23,30 @@ public class AiChatService {
     }
 
     public List<StreamEvent> stream(ChatStreamRequest request) {
+        ChatWork work = runChat(request);
+        List<StreamEvent> events = new ArrayList<>();
+        events.add(new StreamEvent("meta", json(MapLike.of("conversationId", work.conversationId(), "llmEnabled", modelGateway.enabled()))));
+        for (String token : splitForStream(work.answer())) events.add(new StreamEvent("token", token));
+        events.add(new StreamEvent("references", json(work.references())));
+        if (request.enableTools()) events.add(new StreamEvent("tool", "Internal tools enabled: report lookup, data-source snapshot, and safe read-only short query."));
+        if (request.enableChart()) events.add(new StreamEvent("chart", modelGateway.chart(request.message(), work.references())));
+        events.add(new StreamEvent("done", json(MapLike.of("conversationId", work.conversationId()))));
+        return events;
+    }
+
+    public ChatResponse chat(ChatStreamRequest request) {
+        ChatWork work = runChat(request);
+        String chart = request.enableChart() ? modelGateway.chart(request.message(), work.references()) : null;
+        return new ChatResponse(work.conversationId(), work.answer(), modelGateway.enabled(), work.references(), chart);
+    }
+
+    private ChatWork runChat(ChatStreamRequest request) {
         String conversationId = request.conversationId() == null || request.conversationId().isBlank() ? UUID.randomUUID().toString() : request.conversationId();
         List<RetrievedKnowledgeChunk> references = knowledgeBaseService.search(request.message(), request.knowledgeBaseIds(), request.metadataFilter(), 6);
         String answer = modelGateway.answer(request.message(), references);
         repository.saveChatMessage(conversationId, "user", request.message());
         repository.saveChatMessage(conversationId, "assistant", answer);
-        List<StreamEvent> events = new ArrayList<>();
-        events.add(new StreamEvent("meta", json(MapLike.of("conversationId", conversationId, "llmEnabled", modelGateway.enabled()))));
-        for (String token : splitForStream(answer)) events.add(new StreamEvent("token", token));
-        events.add(new StreamEvent("references", json(references)));
-        if (request.enableTools()) events.add(new StreamEvent("tool", "??????????????????????????????????????"));
-        if (request.enableChart()) events.add(new StreamEvent("chart", modelGateway.chart(request.message(), references)));
-        events.add(new StreamEvent("done", json(MapLike.of("conversationId", conversationId))));
-        return events;
-    }
-
-    public ChatResponse chat(ChatStreamRequest request) {
-        var events = stream(request);
-        String conversationId = events.stream().filter(e -> e.event().equals("meta")).findFirst().map(StreamEvent::data).orElse("");
-        StringBuilder answer = new StringBuilder();
-        String chart = null;
-        for (StreamEvent e : events) {
-            if (e.event().equals("token")) answer.append(e.data());
-            if (e.event().equals("chart")) chart = e.data();
-        }
-        List<RetrievedKnowledgeChunk> references = knowledgeBaseService.search(request.message(), request.knowledgeBaseIds(), request.metadataFilter(), 6);
-        return new ChatResponse(conversationId, answer.toString(), modelGateway.enabled(), references, chart);
+        return new ChatWork(conversationId, answer, references);
     }
 
     private List<String> splitForStream(String answer) {
@@ -65,6 +63,7 @@ public class AiChatService {
         try { return objectMapper.writeValueAsString(value); } catch (Exception e) { return String.valueOf(value); }
     }
 
+    private record ChatWork(String conversationId, String answer, List<RetrievedKnowledgeChunk> references) {}
     private record MapLike() {
         static java.util.Map<String, Object> of(String k1, Object v1) { return java.util.Map.of(k1, v1); }
         static java.util.Map<String, Object> of(String k1, Object v1, String k2, Object v2) { return java.util.Map.of(k1, v1, k2, v2); }

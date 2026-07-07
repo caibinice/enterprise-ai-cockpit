@@ -42,8 +42,8 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         if (!enabled()) return fallback.answer(question, references);
         try {
             List<Map<String, String>> messages = new ArrayList<>();
-            messages.add(Map.of("role", "system", "content", "???????????????????????????????????????"));
-            messages.add(Map.of("role", "user", "content", "??????\n" + buildContext(references) + "\n?????" + question));
+            messages.add(Map.of("role", "system", "content", "You are an enterprise AI cockpit assistant. Prefer the retrieved knowledge base evidence. If evidence is insufficient, say so clearly. Answer in the user's requested language."));
+            messages.add(Map.of("role", "user", "content", "Knowledge base evidence:\n" + buildContext(references) + "\nUser question:\n" + question));
             Map<String, Object> body = Map.of(
                 "model", StringUtils.hasText(properties.model()) ? properties.model() : "gpt-5.4-mini",
                 "messages", messages,
@@ -63,7 +63,7 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
             JsonNode content = objectMapper.readTree(response.body()).path("choices").path(0).path("message").path("content");
             return content.isTextual() ? content.asText() : fallback.answer(question, references);
         } catch (Exception ex) {
-            return "???????????????????????" + ex.getMessage() + "\n\n" + fallback.answer(question, references);
+            return "LLM call failed; falling back to local RAG summary. Error: " + ex.getMessage() + "\n\n" + fallback.answer(question, references);
         }
     }
 
@@ -76,7 +76,7 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < references.size(); i++) {
             RetrievedKnowledgeChunk ref = references.get(i);
-            sb.append("[?? ").append(i + 1).append(" | ").append(ref.title()).append("]\n")
+            sb.append("[Reference ").append(i + 1).append(" | ").append(ref.title()).append("]\n")
               .append(ref.content()).append("\nmetadata=").append(ref.metadata()).append("\n\n");
         }
         return sb.toString();

@@ -25,34 +25,34 @@ public class ReportService {
     public void deleteTemplate(long id) { repository.deleteReportTemplate(id); }
 
     public ReportRunResponse runTemplate(long templateId) {
-        ReportTemplateResponse template = repository.findReportTemplate(templateId).orElseThrow(() -> new IllegalArgumentException("???????: " + templateId));
+        ReportTemplateResponse template = repository.findReportTemplate(templateId).orElseThrow(() -> new IllegalArgumentException("Report template not found: " + templateId));
         return runTemplate(new ReportTemplateRequest(template.name(), template.scheduleType(), template.cron(), template.dataSourceKey(), template.knowledgeBaseId(), template.prompt(), template.dimensions(), template.enabled()), template.id());
     }
 
     public ReportRunResponse runTemplate(ReportTemplateRequest request) { return runTemplate(request, 0); }
 
     private ReportRunResponse runTemplate(ReportTemplateRequest request, long templateId) {
-        String metricsJson = "[{\"region\":\"??\",\"amount\":120},{\"region\":\"??\",\"amount\":95},{\"region\":\"??\",\"amount\":88}]";
-        String summary = "# " + request.name() + "\n\n????? `" + nz(request.dataSourceKey()) + "` ?????????? 120??? 95??? 88?????????????????????\n\n?????" + nz(request.dimensions()) + "\n????" + nz(request.prompt());
+        String metricsJson = "[{\"region\":\"East\",\"amount\":120},{\"region\":\"South\",\"amount\":95},{\"region\":\"North\",\"amount\":88}]";
+        String summary = "# " + request.name() + "\n\nGenerated from data source `" + nz(request.dataSourceKey()) + "`. East amount is 120, South is 95, and North is 88. East is the strongest contributor.\n\nDimensions: " + nz(request.dimensions()) + "\nPrompt: " + nz(request.prompt());
         String chart = chart(request.name());
-        ReportRunResponse run = repository.saveReportRun(templateId, request.name(), "SUCCESS", summary, metricsJson, chart, "mock ????????????????");
+        ReportRunResponse run = repository.saveReportRun(templateId, request.name(), "SUCCESS", summary, metricsJson, chart, "Mock data-source extraction succeeded; report was ingested into the knowledge base.");
         if (request.knowledgeBaseId() > 0) {
-            knowledgeBaseService.importDocument(request.knowledgeBaseId(), request.name() + "#" + run.id(), summary + "\n\n?????" + metricsJson, Map.of("report", "true", "template", request.name(), "source", nz(request.dataSourceKey())));
+            knowledgeBaseService.importDocument(request.knowledgeBaseId(), request.name() + "#" + run.id(), summary + "\n\nMetrics: " + metricsJson, Map.of("report", "true", "template", request.name(), "source", nz(request.dataSourceKey())));
         }
         return run;
     }
 
     public List<ReportRunResponse> listRuns() { return repository.listReportRuns(); }
-    public ReportRunResponse getRun(long id) { return repository.findReportRun(id).orElseThrow(() -> new IllegalArgumentException("?????: " + id)); }
+    public ReportRunResponse getRun(long id) { return repository.findReportRun(id).orElseThrow(() -> new IllegalArgumentException("Report run not found: " + id)); }
 
     @Scheduled(cron = "0 0/30 * * * ?")
     public void heartbeatScheduler() {
-        // Quartz/Spring scheduler hook for MVP. Real cron registration is represented by report template config.
+        // Scheduler hook for MVP. Real cron registration is represented by report template config.
     }
 
     private String chart(String title) {
         return """
-            {"type":"echarts","title":{"text":"%s"},"tooltip":{},"xAxis":{"type":"category","data":["??","??","??"]},"yAxis":{"type":"value"},"series":[{"name":"???","type":"bar","data":[120,95,88]}]}
+            {"type":"echarts","title":{"text":"%s"},"tooltip":{},"xAxis":{"type":"category","data":["East","South","North"]},"yAxis":{"type":"value"},"series":[{"name":"Revenue","type":"bar","data":[120,95,88]}]}
             """.formatted(title.replace("\"", "\\\""));
     }
     private String nz(String value) { return value == null ? "" : value; }

@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class KnowledgeBaseService {
-    private static final Pattern SPLIT = Pattern.compile("[\\s\\p{Punct}?????????????????]+");
+    private static final Pattern SPLIT = Pattern.compile("[\\s\\p{Punct}]+");
     private final EnterpriseRepository repository;
     private final ObjectMapper objectMapper;
     private final Tika tika = new Tika();
@@ -49,7 +49,7 @@ public class KnowledgeBaseService {
             String content = tika.parseToString(inputStream);
             return importDocument(knowledgeBaseId, filename, content, metadata);
         } catch (Exception ex) {
-            throw new IllegalArgumentException("??????: " + filename + ", " + ex.getMessage(), ex);
+            throw new IllegalArgumentException("Document parsing failed: " + filename + ", " + ex.getMessage(), ex);
         }
     }
 

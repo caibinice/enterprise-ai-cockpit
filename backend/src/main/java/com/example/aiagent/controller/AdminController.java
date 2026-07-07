@@ -18,17 +18,19 @@ public class AdminController {
     private final KnowledgeBaseService knowledgeBaseService;
     private final DataSourceService dataSourceService;
     private final ReportService reportService;
+    private final ModelGateway modelGateway;
 
-    public AdminController(EnterpriseRepository repository, KnowledgeBaseService knowledgeBaseService, DataSourceService dataSourceService, ReportService reportService) {
+    public AdminController(EnterpriseRepository repository, KnowledgeBaseService knowledgeBaseService, DataSourceService dataSourceService, ReportService reportService, ModelGateway modelGateway) {
         this.repository = repository;
         this.knowledgeBaseService = knowledgeBaseService;
         this.dataSourceService = dataSourceService;
         this.reportService = reportService;
+        this.modelGateway = modelGateway;
     }
 
     @GetMapping("/health")
     public HealthResponse health() {
-        return new HealthResponse("ok", "spring-ai-ready-mock", repository.countKnowledgeBases(), repository.countDocuments(), repository.countChunks(), repository.countReports());
+        return new HealthResponse("ok", modelGateway.enabled() ? "openai-compatible" : "mock", repository.countKnowledgeBases(), repository.countDocuments(), repository.countChunks(), repository.countReports());
     }
 
     @GetMapping("/admin/knowledge-bases") public List<KnowledgeBaseResponse> knowledgeBases() { return knowledgeBaseService.list(); }
@@ -43,7 +45,7 @@ public class AdminController {
         return java.util.Arrays.stream(files)
             .map(file -> {
                 try { return knowledgeBaseService.importFile(knowledgeBaseId, file.getOriginalFilename(), file.getInputStream(), parsed); }
-                catch (IOException ex) { throw new IllegalArgumentException("????: " + file.getOriginalFilename(), ex); }
+                catch (IOException ex) { throw new IllegalArgumentException("Upload failed: " + file.getOriginalFilename(), ex); }
             })
             .toList();
     }
@@ -51,7 +53,7 @@ public class AdminController {
     @PostMapping("/admin/documents/text")
     public KnowledgeDocumentResponse importText(@RequestParam long knowledgeBaseId, @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked") Map<String, String> metadata = (Map<String, String>) body.getOrDefault("metadata", Map.of());
-        return knowledgeBaseService.importDocument(knowledgeBaseId, String.valueOf(body.getOrDefault("title", "?????")), String.valueOf(body.getOrDefault("content", "")), metadata);
+        return knowledgeBaseService.importDocument(knowledgeBaseId, String.valueOf(body.getOrDefault("title", "Untitled document")), String.valueOf(body.getOrDefault("content", "")), metadata);
     }
 
     @PatchMapping("/admin/documents/{id}/metadata") public void updateMetadata(@PathVariable long id, @RequestBody Map<String, String> metadata) { knowledgeBaseService.updateMetadata(id, metadata); }

@@ -17,21 +17,23 @@ public class MockModelGateway implements ModelGateway {
 
     @Override
     public String answer(String question, List<RetrievedKnowledgeChunk> references) {
-        if (references.isEmpty()) return "???????????????????????????????????/metadata ?????\n???" + question;
-        StringBuilder sb = new StringBuilder("???????????????????\n");
+        if (references.isEmpty()) {
+            return "No matching enterprise knowledge base evidence was found. Import documents or relax metadata filters. Question: " + question;
+        }
+        StringBuilder sb = new StringBuilder("Local RAG summary based on retrieved enterprise knowledge:\n");
         int i = 1;
         for (RetrievedKnowledgeChunk ref : references) {
-            sb.append(i++).append(". ???").append(ref.title()).append("??").append(abbreviate(ref.content(), 140)).append("\n");
+            sb.append(i++).append(". From ").append(ref.title()).append(": ").append(abbreviate(ref.content(), 140)).append("\n");
         }
-        if (question != null && question.contains("?")) sb.append("\n????????????? ");
+        if (question != null && question.toLowerCase().contains("chart")) sb.append("\nA chart specification is included in the chart event.");
         return sb.toString();
     }
 
     @Override
     public String chart(String question, List<RetrievedKnowledgeChunk> references) {
-        String title = (question == null || question.isBlank()) ? "??????" : question;
+        String title = (question == null || question.isBlank()) ? "Enterprise Metrics" : question;
         return """
-            {"type":"echarts","title":{"text":"%s"},"tooltip":{},"legend":{"data":["???"]},"xAxis":{"type":"category","data":["??","??","??"]},"yAxis":{"type":"value"},"series":[{"name":"???","type":"bar","data":[120,95,88]}]}
+            {"type":"echarts","title":{"text":"%s"},"tooltip":{},"legend":{"data":["Revenue"]},"xAxis":{"type":"category","data":["East","South","North"]},"yAxis":{"type":"value"},"series":[{"name":"Revenue","type":"bar","data":[120,95,88]}]}
             """.formatted(escape(title));
     }
 

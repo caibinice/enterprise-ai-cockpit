@@ -14,7 +14,7 @@ public class SpeechService {
 
     public SpeechTranscriptionResponse transcribe(String contentType, byte[] audio) {
         String text = new String(audio == null ? new byte[0] : audio, StandardCharsets.UTF_8).trim();
-        if (text.isBlank()) text = "?? mock ?????????????????????";
+        if (text.isBlank()) text = "Mock speech recognition result: analyze enterprise metrics and generate a chart.";
         return new SpeechTranscriptionResponse(text, "mock-openai-compatible");
     }
 
