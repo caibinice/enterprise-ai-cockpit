@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: enterprise-ai-cockpit-postgres
+    environment:
+      POSTGRES_DB: enterprise_ai_cockpit
+      POSTGRES_USER: enterprise_ai
+      POSTGRES_PASSWORD: enterprise_ai_123456
+    ports:
+      - "5432:5432"
+    volumes:
+      - enterprise_ai_cockpit_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enterprise_ai -d enterprise_ai_cockpit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  enterprise_ai_cockpit_pg:

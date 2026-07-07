@@ -1,0 +1,37 @@
+:root {
+  color: #172033;
+  background: #f4f7fb;
+  font-family: Inter, "Microsoft YaHei", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.shell { min-height: 100vh; }
+.side { background: linear-gradient(180deg, #111827, #1e1b4b); color: #fff; padding: 20px 12px; }
+.brand { display: flex; align-items: center; gap: 12px; padding: 8px 10px 24px; }
+.logo { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: #6366f1; font-weight: 900; }
+.brand small { display: block; color: #c7d2fe; margin-top: 4px; }
+.menu { border: 0; background: transparent; }
+.menu .el-menu-item { color: #cbd5e1; border-radius: 12px; margin: 4px 0; }
+.topbar { height: auto; min-height: 92px; display: flex; align-items: center; justify-content: space-between; padding: 22px 28px; background: rgba(255,255,255,.88); border-bottom: 1px solid #e5e7eb; backdrop-filter: blur(12px); }
+.topbar h1 { margin: 0 0 6px; font-size: 26px; }
+.topbar p { margin: 0; color: #64748b; }
+.grid { display: grid; grid-template-columns: minmax(360px, 0.9fr) minmax(520px, 1.3fr); gap: 18px; }
+.cockpit-grid { min-height: calc(100vh - 140px); }
+.el-card { border-radius: 18px; box-shadow: 0 14px 45px rgba(15,23,42,.08); }
+.card-head { display: flex; align-items: center; justify-content: space-between; }
+.chat-card .el-card__body { display: flex; flex-direction: column; height: calc(100vh - 210px); }
+.messages { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 6px; }
+.message { max-width: 86%; padding: 12px 14px; border-radius: 16px; border: 1px solid #e2e8f0; background: #f8fafc; }
+.message.user { margin-left: auto; background: #eef2ff; border-color: #c7d2fe; }
+.message p { white-space: pre-wrap; margin: 8px 0 0; line-height: 1.7; }
+.ask { display: grid; grid-template-columns: 280px 1fr auto auto; gap: 10px; padding-top: 14px; }
+.chart { height: 360px; border-radius: 16px; background: linear-gradient(135deg, #f8fafc, #eef2ff); }
+.table { margin-top: 16px; }
+.meta { margin: 3px; }
+.uploader { margin: 14px 0; }
+.speak { margin-top: 14px; }
+@media (max-width: 1180px) {
+  .grid { grid-template-columns: 1fr; }
+  .ask { grid-template-columns: 1fr; }
+  .side { width: 210px !important; }
+}
