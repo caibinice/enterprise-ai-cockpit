@@ -11,9 +11,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@ConditionalOnProperty(prefix = "app.repository", name = "mode", havingValue = "memory", matchIfMissing = true)
 public class InMemoryEnterpriseRepository implements EnterpriseRepository {
     private final AtomicLong ids = new AtomicLong(0);
     private final Map<Long, KnowledgeBaseResponse> knowledgeBases = new LinkedHashMap<>();

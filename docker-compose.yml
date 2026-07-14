@@ -1,20 +1,41 @@
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: enterprise-ai-cockpit-mysql
+    environment:
+      MYSQL_DATABASE: enterprise_ai_cockpit
+      MYSQL_USER: enterprise_ai_cockpit
+      MYSQL_PASSWORD: enterprise_ai_cockpit_dev
+      MYSQL_ROOT_PASSWORD: enterprise_ai_cockpit_root_dev
+    ports:
+      - "3306:3306"
+    volumes:
+      - enterprise_ai_cockpit_mysql:/var/lib/mysql
+      - ./database/mysql/enterprise_ai_cockpit.sql:/docker-entrypoint-initdb.d/01-enterprise_ai_cockpit.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uenterprise_ai_cockpit -penterprise_ai_cockpit_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: enterprise-ai-cockpit-postgres
     environment:
-      POSTGRES_DB: enterprise_ai_cockpit
-      POSTGRES_USER: enterprise_ai
-      POSTGRES_PASSWORD: enterprise_ai_123456
+      POSTGRES_DB: enterprise_ai_cockpit_vector
+      POSTGRES_USER: enterprise_ai_cockpit
+      POSTGRES_PASSWORD: enterprise_ai_cockpit_dev
     ports:
       - "5432:5432"
     volumes:
       - enterprise_ai_cockpit_pg:/var/lib/postgresql/data
+      - ./database/postgresql/enterprise_ai_cockpit_vector.sql:/docker-entrypoint-initdb.d/01-enterprise_ai_cockpit_vector.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U enterprise_ai -d enterprise_ai_cockpit"]
+      test: ["CMD-SHELL", "pg_isready -U enterprise_ai_cockpit -d enterprise_ai_cockpit_vector"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
 volumes:
+  enterprise_ai_cockpit_mysql:
   enterprise_ai_cockpit_pg:

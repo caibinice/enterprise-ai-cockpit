@@ -1,51 +1,68 @@
 spring:
   application:
     name: enterprise-ai-cockpit
-  autoconfigure:
-    exclude:
-      - org.springframework.ai.retry.autoconfigure.SpringAiRetryAutoConfiguration
-      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
-      - org.springframework.ai.mcp.client.common.autoconfigure.StdioTransportAutoConfiguration
-      - org.springframework.ai.mcp.client.common.autoconfigure.McpClientAutoConfiguration
-      - org.springframework.ai.mcp.client.common.autoconfigure.McpToolCallbackAutoConfiguration
-      - org.springframework.ai.mcp.client.common.autoconfigure.annotations.McpClientAnnotationScannerAutoConfiguration
-      - org.springframework.ai.mcp.client.httpclient.autoconfigure.SseHttpClientTransportAutoConfiguration
-      - org.springframework.ai.mcp.client.httpclient.autoconfigure.StreamableHttpHttpClientTransportAutoConfiguration
+  main:
+    web-application-type: reactive
   datasource:
-    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/enterprise_ai_cockpit}
-    username: ${POSTGRES_USER:enterprise_ai}
-    password: ${POSTGRES_PASSWORD:enterprise_ai_123456}
-    driver-class-name: org.postgresql.Driver
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/enterprise_ai_cockpit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USER:enterprise_ai_cockpit}
+    password: ${MYSQL_PASSWORD:change-me}
+    driver-class-name: com.mysql.cj.jdbc.Driver
   flyway:
     enabled: ${FLYWAY_ENABLED:false}
-    locations: classpath:db/migration
-  servlet:
+    locations: classpath:db/migration/mysql
+  webflux:
     multipart:
       max-file-size: 50MB
       max-request-size: 200MB
+      max-in-memory-size: 8MB
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY:${AI_DASHSCOPE_API_KEY:demo-key}}
-      base-url: ${OPENAI_BASE_URL:https://api.okinto.com/v1}
+      api-key: ${OPENAI_API_KEY:${DEEPSEEK_API_KEY:demo-key}}
+      base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
       chat:
         options:
-          model: ${LLM_MODEL:gpt-5.4-mini}
-      embedding:
-        options:
-          model: ${EMBEDDING_MODEL:text-embedding-v3}
+          model: ${LLM_MODEL:deepseek-v4-flash}
+    mcp:
+      client:
+        enabled: ${MCP_ENABLED:false}
+        name: enterprise-ai-cockpit
+        version: 0.0.1
+        request-timeout: ${MCP_REQUEST_TIMEOUT:10s}
+        initialized: false
+        toolcallback:
+          enabled: false
+        stdio:
+          connections:
+            weather:
+              command: ${MCP_NODE_COMMAND:node}
+              args:
+                - ${MCP_WEATHER_SERVER:mcp-servers/weather-mcp-server.js}
 
 server:
   port: ${SERVER_PORT:8080}
 
 app:
   repository:
-    mode: ${APP_REPOSITORY_MODE:memory}
+    mode: ${APP_REPOSITORY_MODE:mysql}
   llm:
     enabled: ${LLM_ENABLED:false}
-    provider: ${LLM_PROVIDER:openai-compatible}
-    base-url: ${OPENAI_BASE_URL:https://api.okinto.com/v1}
-    api-key: ${OPENAI_API_KEY:demo-key}
-    model: ${LLM_MODEL:gpt-5.4-mini}
+    provider: ${LLM_PROVIDER:spring-ai}
+    base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
+    api-key: ${OPENAI_API_KEY:${DEEPSEEK_API_KEY:demo-key}}
+    model: ${LLM_MODEL:deepseek-v4-flash}
+  vector:
+    enabled: ${VECTOR_ENABLED:false}
+    url: ${VECTOR_DATABASE_URL:jdbc:postgresql://127.0.0.1:5432/enterprise_ai_cockpit_vector}
+    username: ${VECTOR_DATABASE_USER:enterprise_ai_cockpit}
+    password: ${VECTOR_DATABASE_PASSWORD:change-me}
+    schema: ${VECTOR_DATABASE_SCHEMA:public}
+  embedding:
+    mode: ${EMBEDDING_MODE:local}
+    dimensions: ${EMBEDDING_DIMENSIONS:1536}
+    base-url: ${EMBEDDING_BASE_URL:}
+    api-key: ${EMBEDDING_API_KEY:}
+    model: ${EMBEDDING_MODEL:text-embedding-v3}
   speech:
     provider: ${SPEECH_PROVIDER:mock-openai-compatible}
   rag:

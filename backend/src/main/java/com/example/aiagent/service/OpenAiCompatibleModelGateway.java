@@ -13,22 +13,30 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 @Service
 @ConditionalOnProperty(prefix = "app.llm", name = "enabled", havingValue = "true")
+@ConditionalOnProperty(prefix = "app.llm", name = "provider", havingValue = "openai-compatible")
 public class OpenAiCompatibleModelGateway implements ModelGateway {
     private final LlmProperties properties;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final WebClient webClient;
     private final MockModelGateway fallback;
 
-    public OpenAiCompatibleModelGateway(LlmProperties properties, ObjectMapper objectMapper) {
+    public OpenAiCompatibleModelGateway(LlmProperties properties, ObjectMapper objectMapper, WebClient.Builder webClientBuilder) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.webClient = webClientBuilder.build();
         this.fallback = new MockModelGateway(objectMapper);
     }
 
@@ -67,6 +75,28 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         }
     }
 
+    /**
+     * Consumes the upstream provider's SSE response instead of splitting a completed answer locally.
+     * DeepSeek exposes the same OpenAI-compatible /chat/completions stream contract.
+     */
+    @Override
+    public Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
+        if (!enabled()) return fallback.streamAnswer(question, references);
+        return Flux.defer(() -> webClient.post()
+                .uri(normalizeBaseUrl(properties.baseUrl()) + "/chat/completions")
+                .header("Authorization", "Bearer " + properties.apiKey())
+                .bodyValue(streamBody(question, references))
+                .retrieve()
+                .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {})
+                .map(ServerSentEvent::data)
+                .filter(StringUtils::hasText)
+                .takeUntil("[DONE]"::equals)
+                .map(this::parseToken)
+                .filter(StringUtils::hasText))
+            .subscribeOn(Schedulers.boundedElastic())
+            .onErrorResume(ex -> Flux.just("LLM stream failed; using local RAG fallback. Error: " + ex.getMessage() + "\n\n" + fallback.answer(question, references)));
+    }
+
     @Override
     public String chart(String question, List<RetrievedKnowledgeChunk> references) {
         return fallback.chart(question, references);
@@ -80,6 +110,33 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
               .append(ref.content()).append("\nmetadata=").append(ref.metadata()).append("\n\n");
         }
         return sb.toString();
+    }
+
+    private Map<String, Object> streamBody(String question, List<RetrievedKnowledgeChunk> references) {
+        return Map.of(
+            "model", StringUtils.hasText(properties.model()) ? properties.model() : "deepseek-v4-flash",
+            "messages", messages(question, references),
+            "temperature", 0.2,
+            "max_tokens", 1200,
+            "stream", true
+        );
+    }
+
+    private List<Map<String, String>> messages(String question, List<RetrievedKnowledgeChunk> references) {
+        return List.of(
+            Map.of("role", "system", "content", "You are an enterprise AI cockpit assistant. Prefer the retrieved knowledge base evidence. If evidence is insufficient, say so clearly. Answer in the user's requested language."),
+            Map.of("role", "user", "content", "Knowledge base evidence:\n" + buildContext(references) + "\nUser question:\n" + question)
+        );
+    }
+
+    private String parseToken(String data) {
+        if ("[DONE]".equals(data)) return "";
+        try {
+            JsonNode content = objectMapper.readTree(data).path("choices").path(0).path("delta").path("content");
+            return content.isTextual() ? content.asText() : "";
+        } catch (Exception ex) {
+            return "";
+        }
     }
 
     private String normalizeBaseUrl(String baseUrl) {

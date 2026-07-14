@@ -5,10 +5,13 @@ import com.example.aiagent.model.SpeechSynthesisResponse;
 import com.example.aiagent.model.SpeechTranscriptionResponse;
 import com.example.aiagent.service.SpeechService;
 import jakarta.validation.Valid;
-import java.io.IOException;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.codec.multipart.FilePart;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/speech")
@@ -17,12 +20,25 @@ public class SpeechController {
     public SpeechController(SpeechService speechService) { this.speechService = speechService; }
 
     @PostMapping(path = "/transcribe", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public SpeechTranscriptionResponse transcribe(@RequestPart("audio") MultipartFile audio) throws IOException {
-        return speechService.transcribe(audio.getContentType(), audio.getBytes());
+    public Mono<SpeechTranscriptionResponse> transcribe(@RequestPart("audio") FilePart audio) {
+        return DataBufferUtils.join(audio.content())
+            .map(buffer -> readAudio(audio, buffer))
+            .subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/synthesize")
     public SpeechSynthesisResponse synthesize(@Valid @RequestBody SpeechSynthesisRequest request) {
         return speechService.synthesize(request.text());
+    }
+
+    private SpeechTranscriptionResponse readAudio(FilePart audio, DataBuffer buffer) {
+        try {
+            byte[] bytes = new byte[buffer.readableByteCount()];
+            buffer.read(bytes);
+            String contentType = audio.headers().getContentType() == null ? "application/octet-stream" : audio.headers().getContentType().toString();
+            return speechService.transcribe(contentType, bytes);
+        } finally {
+            DataBufferUtils.release(buffer);
+        }
     }
 }

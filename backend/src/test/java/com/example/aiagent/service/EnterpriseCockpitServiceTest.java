@@ -71,4 +71,11 @@ class EnterpriseCockpitServiceTest {
         assertThat(text.text()).contains("sales situation");
         assertThat(audio.audioUrl()).startsWith("data:audio/wav;base64,");
     }
+
+    @Test
+    void chartSpecRemainsValidWhenTitleContainsJsonCharacters() throws Exception {
+        var chart = new MockModelGateway(objectMapper).chart("Sales \"Q1\"\ntrend", List.of());
+
+        assertThat(objectMapper.readTree(chart).path("title").path("text").asText()).isEqualTo("Sales \"Q1\"\ntrend");
+    }
 }

@@ -3,6 +3,7 @@ package com.example.aiagent.service;
 import com.example.aiagent.model.*;
 import com.example.aiagent.repository.EnterpriseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,6 +33,10 @@ public class ReportService {
     public ReportRunResponse runTemplate(ReportTemplateRequest request) { return runTemplate(request, 0); }
 
     private ReportRunResponse runTemplate(ReportTemplateRequest request, long templateId) {
+        if (request.knowledgeBaseId() > 0) {
+            repository.findKnowledgeBase(request.knowledgeBaseId())
+                .orElseThrow(() -> new IllegalArgumentException("Knowledge base not found: " + request.knowledgeBaseId()));
+        }
         String metricsJson = "[{\"region\":\"East\",\"amount\":120},{\"region\":\"South\",\"amount\":95},{\"region\":\"North\",\"amount\":88}]";
         String summary = "# " + request.name() + "\n\nGenerated from data source `" + nz(request.dataSourceKey()) + "`. East amount is 120, South is 95, and North is 88. East is the strongest contributor.\n\nDimensions: " + nz(request.dimensions()) + "\nPrompt: " + nz(request.prompt());
         String chart = chart(request.name());
@@ -51,9 +56,18 @@ public class ReportService {
     }
 
     private String chart(String title) {
-        return """
-            {"type":"echarts","title":{"text":"%s"},"tooltip":{},"xAxis":{"type":"category","data":["East","South","North"]},"yAxis":{"type":"value"},"series":[{"name":"Revenue","type":"bar","data":[120,95,88]}]}
-            """.formatted(title.replace("\"", "\\\""));
+        Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("type", "echarts");
+        spec.put("title", Map.of("text", title == null ? "Enterprise Metrics" : title));
+        spec.put("tooltip", Map.of());
+        spec.put("xAxis", Map.of("type", "category", "data", List.of("East", "South", "North")));
+        spec.put("yAxis", Map.of("type", "value"));
+        spec.put("series", List.of(Map.of("name", "Revenue", "type", "bar", "data", List.of(120, 95, 88))));
+        try {
+            return objectMapper.writeValueAsString(spec);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Chart specification serialization failed", ex);
+        }
     }
     private String nz(String value) { return value == null ? "" : value; }
 }

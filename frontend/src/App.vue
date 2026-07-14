@@ -25,6 +25,7 @@
         <el-space>
           <el-tag type="success">{{ health?.status ?? 'loading' }}</el-tag>
           <el-tag>{{ health?.mode ?? 'mock' }}</el-tag>
+          <el-tag type="info">{{ health?.repository ?? 'repository' }}</el-tag>
           <el-button @click="refreshAll">Refresh</el-button>
         </el-space>
       </el-header>
@@ -56,7 +57,7 @@
             <div ref="chartRef" class="chart"></div>
             <el-divider />
             <el-collapse v-if="references.length">
-              <el-collapse-item v-for="ref in references" :key="ref.id" :title="`${ref.title} ? score ${ref.score.toFixed(1)}`">
+              <el-collapse-item v-for="ref in references" :key="ref.id" :title="`${ref.title} · score ${ref.score.toFixed(1)}`">
                 <p>{{ ref.content }}</p>
                 <el-tag v-for="(v, k) in ref.metadata" :key="k" class="meta">{{ k }}={{ v }}</el-tag>
               </el-collapse-item>
@@ -143,10 +144,11 @@
         <section v-else class="grid">
           <el-card>
             <template #header>MCP Tool Calling</template>
-            <el-alert type="info" show-icon :closable="false" title="Spring AI MCP Client starter is reserved. Use real-time tools for short read-only calls; precompute slow reports into the vector knowledge base." />
+            <el-alert type="info" show-icon :closable="false" title="天气问题会通过 Spring AI MCP Client 的 STDIO queryWeather 工具调用示例服务；慢任务仍应预计算到知识库。" />
             <el-descriptions :column="1" border class="table">
-              <el-descriptions-item label="Internal Tools">Report lookup, data-source snapshot, safe short query</el-descriptions-item>
-              <el-descriptions-item label="External MCP">Configure STDIO, SSE, or Streamable HTTP MCP servers through application.yml / environment variables</el-descriptions-item>
+              <el-descriptions-item label="Vector Store">{{ health?.vectorStore ?? 'loading' }}</el-descriptions-item>
+              <el-descriptions-item label="MCP Status">{{ health?.mcp ?? 'loading' }}</el-descriptions-item>
+              <el-descriptions-item label="Test Endpoint">GET /api/mcp/weather?city=常州</el-descriptions-item>
             </el-descriptions>
           </el-card>
           <el-card>
@@ -162,21 +164,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import * as echarts from 'echarts';
 import type { UploadFile } from 'element-plus';
 import { ElMessage } from 'element-plus';
+import { useRoute, useRouter } from 'vue-router';
 import { api, streamChat } from './api';
 
 type KnowledgeBase = { id: number; name: string; description: string; code: string; documentCount: number };
 type DocumentRow = { id: number; title: string; chunks: number; metadata: Record<string, string> };
 type Reference = { id: number; title: string; content: string; score: number; metadata: Record<string, string> };
-type Health = { status: string; mode: string; knowledgeBases: number; documents: number; chunks: number; reports: number };
+  type Health = { status: string; mode: string; repository: string; vectorStore: string; mcp: string; knowledgeBases: number; documents: number; chunks: number; reports: number };
 type DataSource = { id: number; name: string; type: string; endpoint: string; queryText: string };
 type ReportTemplate = { id: number; name: string; cron: string };
 type ReportRun = { id: number; name: string; status: string; createdAt: string; chartSpec: string };
 
-const active = ref('cockpit');
+const route = useRoute();
+const router = useRouter();
+type Section = 'cockpit' | 'knowledge' | 'reports' | 'settings';
+const active = computed<Section>({
+  get: () => route.path === '/' ? 'cockpit' : (route.path.slice(1) as Section),
+  set: value => { void router.push(value === 'cockpit' ? '/' : `/${value}`); }
+});
 const health = ref<Health>();
 const knowledgeBases = ref<KnowledgeBase[]>([]);
 const documents = ref<DocumentRow[]>([]);
@@ -189,6 +198,7 @@ const files = ref<File[]>([]);
 const chartRef = ref<HTMLDivElement>();
 const ttsText = ref('Welcome to Enterprise AI Cockpit');
 const loading = reactive({ chat: false });
+let chartInstance: echarts.ECharts | undefined;
 
 const kbForm = reactive({ name: 'Enterprise KB', code: 'DEFAULT', description: 'Enterprise policies, metrics, and reports' });
 const upload = reactive({ knowledgeBaseId: 0, title: 'Sales Daily', content: 'East sales amount is 120 and South sales amount is 95.', metadata: '{"category":"sales"}' });
@@ -196,22 +206,50 @@ const chat = reactive({ conversationId: '', message: 'Generate a sales chart', k
 const dsForm = reactive({ name: 'Mock Sales API', type: 'HTTP', endpoint: 'https://example.com/sales', queryText: 'GET /sales?period=today' });
 const reportForm = reactive({ name: 'Sales Daily', scheduleType: 'CRON', cron: '0 0 9 * * ?', dataSourceKey: 'mock-sales', knowledgeBaseId: 0, prompt: 'Analyze sales trend', dimensions: 'region,amount', enabled: true });
 
-const pageTitle = computed(() => ({ cockpit: 'AI Cockpit Chat', knowledge: 'Knowledge Base', reports: 'Data & Reports', settings: 'MCP / Speech' }[active.value]));
+const pageTitle = computed(() => ({ cockpit: 'AI Cockpit Chat', knowledge: 'Knowledge Base', reports: 'Data & Reports', settings: 'MCP / Speech' }[active.value] ?? 'AI Cockpit Chat'));
 const lastAssistant = computed(() => [...messages.value].reverse().find(m => m.role === 'assistant')?.content ?? '');
 
 async function refreshAll() {
-  health.value = await api<Health>('/health');
-  knowledgeBases.value = await api<KnowledgeBase[]>('/admin/knowledge-bases');
-  documents.value = await api<DocumentRow[]>('/admin/documents');
-  dataSources.value = await api<DataSource[]>('/admin/data-sources');
-  reportTemplates.value = await api<ReportTemplate[]>('/admin/report-templates');
-  reportRuns.value = await api<ReportRun[]>('/admin/report-runs');
-  if (!upload.knowledgeBaseId && knowledgeBases.value[0]) upload.knowledgeBaseId = knowledgeBases.value[0].id;
-  if (!reportForm.knowledgeBaseId && knowledgeBases.value[0]) reportForm.knowledgeBaseId = knowledgeBases.value[0].id;
+  try {
+    const [nextHealth, nextKnowledgeBases, nextDocuments, nextDataSources, nextReportTemplates, nextReportRuns] = await Promise.all([
+      api<Health>('/health'),
+      api<KnowledgeBase[]>('/admin/knowledge-bases'),
+      api<DocumentRow[]>('/admin/documents'),
+      api<DataSource[]>('/admin/data-sources'),
+      api<ReportTemplate[]>('/admin/report-templates'),
+      api<ReportRun[]>('/admin/report-runs')
+    ]);
+    health.value = nextHealth;
+    knowledgeBases.value = nextKnowledgeBases;
+    documents.value = nextDocuments;
+    dataSources.value = nextDataSources;
+    reportTemplates.value = nextReportTemplates;
+    reportRuns.value = nextReportRuns;
+    if (!upload.knowledgeBaseId || !knowledgeBases.value.some(kb => kb.id === upload.knowledgeBaseId)) {
+      upload.knowledgeBaseId = knowledgeBases.value[0]?.id ?? 0;
+    }
+    if (!reportForm.knowledgeBaseId || !knowledgeBases.value.some(kb => kb.id === reportForm.knowledgeBaseId)) {
+      reportForm.knowledgeBaseId = knowledgeBases.value[0]?.id ?? 0;
+    }
+  } catch (error) {
+    ElMessage.error(errorMessage(error));
+  }
 }
 
-function parseJsonMap(text: string) {
-  try { return text ? JSON.parse(text) : {}; } catch { return {}; }
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function parseJsonMap(text: string): Record<string, string> | null {
+  if (!text.trim()) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error('Metadata must be a JSON object');
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, String(item)]));
+  } catch (error) {
+    ElMessage.error(`Metadata JSON is invalid: ${errorMessage(error)}`);
+    return null;
+  }
 }
 
 async function createKnowledgeBase() {
@@ -221,16 +259,25 @@ async function createKnowledgeBase() {
 }
 
 async function importText() {
-  await api('/admin/documents/text?knowledgeBaseId=' + upload.knowledgeBaseId, { method: 'POST', body: JSON.stringify({ title: upload.title, content: upload.content, metadata: parseJsonMap(upload.metadata) }) });
+  if (!upload.knowledgeBaseId) return ElMessage.warning('Create or select a knowledge base first');
+  const metadata = parseJsonMap(upload.metadata);
+  if (!metadata) return;
+  await api('/admin/documents/text?knowledgeBaseId=' + upload.knowledgeBaseId, { method: 'POST', body: JSON.stringify({ title: upload.title, content: upload.content, metadata }) });
   ElMessage.success('Document imported');
   await refreshAll();
 }
 
-function onFileChange(file: UploadFile) { if (file.raw) files.value.push(file.raw); }
+function onFileChange(file: UploadFile) {
+  if (!file.raw || files.value.some(existing => existing.name === file.raw!.name && existing.size === file.raw!.size && existing.lastModified === file.raw!.lastModified)) return;
+  files.value.push(file.raw);
+}
 async function uploadFiles() {
+  if (!upload.knowledgeBaseId) return ElMessage.warning('Create or select a knowledge base first');
+  const metadata = parseJsonMap(upload.metadata);
+  if (!metadata) return;
   const form = new FormData();
   form.set('knowledgeBaseId', String(upload.knowledgeBaseId));
-  form.set('metadata', upload.metadata);
+  form.set('metadata', JSON.stringify(metadata));
   files.value.forEach(f => form.append('files', f));
   await api('/admin/documents/batch-upload', { method: 'POST', body: form });
   files.value = [];
@@ -239,40 +286,56 @@ async function uploadFiles() {
 }
 
 async function sendChat() {
-  if (!chat.message.trim()) return;
+  const question = chat.message.trim();
+  if (!question) return;
   loading.chat = true;
-  messages.value.push({ role: 'user', content: chat.message });
+  messages.value.push({ role: 'user', content: question });
   const assistantIndex = messages.value.length;
   messages.value.push({ role: 'assistant', content: '' });
   references.value = [];
   try {
-    await streamChat({ ...chat, metadataFilter: {}, knowledgeBaseIds: chat.knowledgeBaseIds.length ? chat.knowledgeBaseIds : knowledgeBases.value.map(k => k.id) }, async msg => {
-      if (msg.event === 'meta') chat.conversationId = JSON.parse(msg.data).conversationId;
+    await streamChat({ ...chat, message: question, metadataFilter: {}, knowledgeBaseIds: chat.knowledgeBaseIds.length ? chat.knowledgeBaseIds : knowledgeBases.value.map(k => k.id) }, async msg => {
+      if (msg.event === 'meta') {
+        const meta = parseJson(msg.data, {}) as { conversationId?: string };
+        if (meta.conversationId) chat.conversationId = meta.conversationId;
+      }
       if (msg.event === 'token') {
         const current = messages.value[assistantIndex];
-        messages.value[assistantIndex] = { ...current, content: current.content + msg.data };
+        if (current) messages.value[assistantIndex] = { ...current, content: current.content + msg.data };
       }
-      if (msg.event === 'references') references.value = JSON.parse(msg.data);
-      if (msg.event === 'chart') renderChart(JSON.parse(msg.data));
+      if (msg.event === 'references') references.value = parseJson(msg.data, []);
+      if (msg.event === 'chart') renderChart(parseJson(msg.data, null));
       if (msg.event === 'error') ElMessage.error(msg.data);
     });
-  } finally { loading.chat = false; }
+  } catch (error) {
+    const message = `Chat failed: ${errorMessage(error)}`;
+    const current = messages.value[assistantIndex];
+    if (current) messages.value[assistantIndex] = { ...current, content: message };
+    ElMessage.error(message);
+  } finally {
+    loading.chat = false;
+  }
 }
 
-function renderChart(spec: any) {
+function parseJson<T>(text: string, fallback: T): T {
+  try { return JSON.parse(text) as T; } catch { return fallback; }
+}
+
+function renderChart(spec: unknown) {
   nextTick(() => {
-    if (!chartRef.value) return;
-    const chartInstance = echarts.getInstanceByDom(chartRef.value) ?? echarts.init(chartRef.value);
-    chartInstance.setOption(spec, true);
+    if (!chartRef.value || !spec || typeof spec !== 'object') return;
+    chartInstance ??= echarts.getInstanceByDom(chartRef.value) ?? echarts.init(chartRef.value);
+    chartInstance.setOption(spec as echarts.EChartsOption, true);
   });
 }
 
 async function createDataSource() { await api('/admin/data-sources', { method: 'POST', body: JSON.stringify({ ...dsForm, config: {} }) }); await refreshAll(); }
 async function createReportTemplate() { await api('/admin/report-templates', { method: 'POST', body: JSON.stringify(reportForm) }); await refreshAll(); }
-async function runReport(id: number) { const run = await api<ReportRun>(`/admin/report-templates/${id}/run-now`, { method: 'POST' }); renderChart(JSON.parse(run.chartSpec)); await refreshAll(); }
+async function runReport(id: number) { const run = await api<ReportRun>(`/admin/report-templates/${id}/run-now`, { method: 'POST' }); renderChart(parseJson(run.chartSpec, null)); await refreshAll(); }
 
 async function speak() { await speakText(lastAssistant.value); }
 async function speakText(text: string) {
+  if (!text.trim()) return ElMessage.warning('There is no answer to speak');
   const res = await api<{ audioUrl: string }>('/speech/synthesize', { method: 'POST', body: JSON.stringify({ text }) });
   new Audio(res.audioUrl).play().catch(() => ElMessage.info('Browser blocked autoplay. Allow audio playback manually.'));
 }
@@ -283,5 +346,16 @@ async function mockVoiceInput() {
   chat.message = res.text;
 }
 
-onMounted(refreshAll);
+function resizeChart() { chartInstance?.resize(); }
+
+onMounted(() => {
+  window.addEventListener('resize', resizeChart);
+  void refreshAll();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeChart);
+  chartInstance?.dispose();
+  chartInstance = undefined;
+});
 </script>

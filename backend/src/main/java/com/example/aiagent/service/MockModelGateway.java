@@ -2,9 +2,12 @@ package com.example.aiagent.service;
 
 import com.example.aiagent.model.RetrievedKnowledgeChunk;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 @Service
 @ConditionalOnProperty(prefix = "app.llm", name = "enabled", havingValue = "false", matchIfMissing = true)
@@ -30,16 +33,33 @@ public class MockModelGateway implements ModelGateway {
     }
 
     @Override
+    public Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
+        String answer = answer(question, references);
+        java.util.List<String> chunks = new java.util.ArrayList<>();
+        for (int i = 0; i < answer.length(); i += 48) chunks.add(answer.substring(i, Math.min(answer.length(), i + 48)));
+        return Flux.fromIterable(chunks.isEmpty() ? List.of("") : chunks);
+    }
+
+    @Override
     public String chart(String question, List<RetrievedKnowledgeChunk> references) {
         String title = (question == null || question.isBlank()) ? "Enterprise Metrics" : question;
-        return """
-            {"type":"echarts","title":{"text":"%s"},"tooltip":{},"legend":{"data":["Revenue"]},"xAxis":{"type":"category","data":["East","South","North"]},"yAxis":{"type":"value"},"series":[{"name":"Revenue","type":"bar","data":[120,95,88]}]}
-            """.formatted(escape(title));
+        Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("type", "echarts");
+        spec.put("title", Map.of("text", title));
+        spec.put("tooltip", Map.of());
+        spec.put("legend", Map.of("data", List.of("Revenue")));
+        spec.put("xAxis", Map.of("type", "category", "data", List.of("East", "South", "North")));
+        spec.put("yAxis", Map.of("type", "value"));
+        spec.put("series", List.of(Map.of("name", "Revenue", "type", "bar", "data", List.of(120, 95, 88))));
+        try {
+            return objectMapper.writeValueAsString(spec);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Chart specification serialization failed", ex);
+        }
     }
 
     private String abbreviate(String text, int max) {
         String normalized = text == null ? "" : text.replaceAll("\\s+", " ").trim();
         return normalized.length() <= max ? normalized : normalized.substring(0, max) + "...";
     }
-    private String escape(String s) { return s.replace("\\", "\\\\").replace("\"", "\\\""); }
 }

@@ -14,15 +14,19 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.apache.tika.Tika;
 import org.springframework.stereotype.Service;
 
 @Service
 public class KnowledgeBaseService {
     private static final Pattern SPLIT = Pattern.compile("[\\s\\p{Punct}]+");
+    private static final int CHUNK_SIZE = 800;
+    private static final int MAX_TOP_K = 20;
     private final EnterpriseRepository repository;
     private final ObjectMapper objectMapper;
     private final Tika tika = new Tika();
+    private volatile VectorIndexService vectorIndexService;
 
     public KnowledgeBaseService(EnterpriseRepository repository, ObjectMapper objectMapper) {
         this.repository = repository;
@@ -35,39 +39,71 @@ public class KnowledgeBaseService {
 
     public KnowledgeBaseResponse create(KnowledgeBaseRequest request) { return repository.saveKnowledgeBase(request); }
     public List<KnowledgeBaseResponse> list() { return repository.listKnowledgeBases(); }
-    public void deleteKnowledgeBase(long id) { repository.deleteKnowledgeBase(id); }
+    public void deleteKnowledgeBase(long id) {
+        if (vectorIndexService != null && vectorIndexService.enabled()) {
+            repository.findAllChunks().stream().filter(chunk -> chunk.knowledgeBaseId() == id)
+                .forEach(chunk -> vectorIndexService.delete(chunk.id()));
+        }
+        repository.deleteKnowledgeBase(id);
+    }
 
     public KnowledgeDocumentResponse importDocument(long knowledgeBaseId, String title, String content, Map<String, String> metadata) {
-        String normalized = content == null ? "" : content.trim();
+        repository.findKnowledgeBase(knowledgeBaseId)
+            .orElseThrow(() -> new IllegalArgumentException("Knowledge base not found: " + knowledgeBaseId));
+        String safeTitle = title == null || title.isBlank() ? "Untitled document" : title.trim();
+        String normalized = normalizeContent(content);
         Map<String, String> safeMeta = metadata == null ? new LinkedHashMap<>() : new LinkedHashMap<>(metadata);
-        safeMeta.putIfAbsent("source", title);
-        return repository.saveDocument(knowledgeBaseId, title, normalized, safeMeta, chunk(normalized));
+        safeMeta.putIfAbsent("source", safeTitle);
+        KnowledgeDocumentResponse document = repository.saveDocument(knowledgeBaseId, safeTitle, normalized, safeMeta, chunk(normalized));
+        syncDocumentVectors(document.id());
+        return document;
     }
 
     public KnowledgeDocumentResponse importFile(long knowledgeBaseId, String filename, InputStream inputStream, Map<String, String> metadata) {
+        String safeFilename = filename == null || filename.isBlank() ? "Uploaded document" : filename.trim();
+        if (inputStream == null) throw new IllegalArgumentException("Uploaded document is empty: " + safeFilename);
         try {
             String content = tika.parseToString(inputStream);
-            return importDocument(knowledgeBaseId, filename, content, metadata);
+            return importDocument(knowledgeBaseId, safeFilename, content, metadata);
         } catch (Exception ex) {
-            throw new IllegalArgumentException("Document parsing failed: " + filename + ", " + ex.getMessage(), ex);
+            throw new IllegalArgumentException("Document parsing failed: " + safeFilename + ", " + ex.getMessage(), ex);
         }
     }
 
     public List<KnowledgeDocumentResponse> listDocuments(Long knowledgeBaseId) { return repository.listDocuments(knowledgeBaseId); }
-    public void updateMetadata(long id, Map<String, String> metadata) { repository.updateDocumentMetadata(id, metadata); }
-    public void deleteDocument(long id) { repository.deleteDocument(id); }
+    public void updateMetadata(long id, Map<String, String> metadata) {
+        ensureDocumentExists(id);
+        repository.updateDocumentMetadata(id, metadata);
+        syncDocumentVectors(id);
+    }
+    public void deleteDocument(long id) {
+        ensureDocumentExists(id);
+        deleteDocumentVectors(id);
+        repository.deleteDocument(id);
+    }
 
     public List<RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, Map<String, String> metadataFilter, int topK) {
         Set<String> queryTokens = tokenize(query);
         List<Long> kbIds = knowledgeBaseIds == null ? List.of() : knowledgeBaseIds;
         Map<String, String> filter = metadataFilter == null ? Map.of() : metadataFilter;
+        if (vectorIndexService != null && vectorIndexService.enabled() && query != null && !query.isBlank()) {
+            try {
+                List<RetrievedKnowledgeChunk> vectorHits = vectorIndexService.search(query, kbIds, topK).stream()
+                    .filter(c -> metadataMatches(c.metadata(), filter))
+                    .limit(Math.min(MAX_TOP_K, Math.max(1, topK)))
+                    .toList();
+                if (!vectorHits.isEmpty()) return vectorHits;
+            } catch (RuntimeException ignored) {
+                // The relational repository remains a safe fallback during a vector database outage.
+            }
+        }
         return repository.findAllChunks().stream()
             .filter(c -> kbIds.isEmpty() || kbIds.contains(c.knowledgeBaseId()))
             .filter(c -> metadataMatches(c.metadata(), filter))
             .map(c -> new RetrievedKnowledgeChunk(c.id(), c.documentId(), c.knowledgeBaseId(), c.title(), c.content(), score(query, queryTokens, c), c.metadata()))
             .filter(c -> c.score() > 0.0 || !filter.isEmpty())
             .sorted(Comparator.comparingDouble(RetrievedKnowledgeChunk::score).reversed())
-            .limit(Math.max(1, topK))
+            .limit(Math.min(MAX_TOP_K, Math.max(1, topK)))
             .toList();
     }
 
@@ -86,14 +122,22 @@ public class KnowledgeBaseService {
     }
 
     private List<String> chunk(String content) {
-        int chunkSize = 800;
         List<String> chunks = new ArrayList<>();
-        String normalized = content == null ? "" : content.replace("\r\n", "\n").trim();
-        for (int i = 0; i < normalized.length(); i += chunkSize) {
-            chunks.add(normalized.substring(i, Math.min(normalized.length(), i + chunkSize)));
+        String normalized = normalizeContent(content);
+        for (int i = 0; i < normalized.length(); i += CHUNK_SIZE) {
+            chunks.add(normalized.substring(i, Math.min(normalized.length(), i + CHUNK_SIZE)));
         }
-        if (chunks.isEmpty()) chunks.add(normalized);
         return chunks;
+    }
+
+    private String normalizeContent(String content) {
+        return content == null ? "" : content.replace("\r\n", "\n").replace('\r', '\n').trim();
+    }
+
+    private void ensureDocumentExists(long id) {
+        if (repository.findDocument(id).isEmpty()) {
+            throw new IllegalArgumentException("Document not found: " + id);
+        }
     }
 
     private boolean metadataMatches(Map<String, String> metadata, Map<String, String> filter) {
@@ -134,5 +178,22 @@ public class KnowledgeBaseService {
         return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
             || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
             || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS;
+    }
+
+    @Autowired(required = false)
+    void setVectorIndexService(VectorIndexService vectorIndexService) {
+        this.vectorIndexService = vectorIndexService;
+    }
+
+    private void syncDocumentVectors(long documentId) {
+        if (vectorIndexService == null || !vectorIndexService.enabled()) return;
+        repository.findAllChunks().stream().filter(chunk -> chunk.documentId() == documentId)
+            .forEach(vectorIndexService::upsert);
+    }
+
+    private void deleteDocumentVectors(long documentId) {
+        if (vectorIndexService == null || !vectorIndexService.enabled()) return;
+        repository.findAllChunks().stream().filter(chunk -> chunk.documentId() == documentId)
+            .forEach(chunk -> vectorIndexService.delete(chunk.id()));
     }
 }

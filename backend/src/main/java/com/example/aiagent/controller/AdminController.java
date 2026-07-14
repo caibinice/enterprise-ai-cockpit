@@ -4,12 +4,17 @@ import com.example.aiagent.model.*;
 import com.example.aiagent.repository.EnterpriseRepository;
 import com.example.aiagent.service.*;
 import jakarta.validation.Valid;
-import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.codec.multipart.FilePart;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api")
@@ -19,18 +24,28 @@ public class AdminController {
     private final DataSourceService dataSourceService;
     private final ReportService reportService;
     private final ModelGateway modelGateway;
+    private final ObjectProvider<VectorIndexService> vectorIndexProvider;
+    private final ObjectProvider<McpWeatherService> mcpWeatherProvider;
 
-    public AdminController(EnterpriseRepository repository, KnowledgeBaseService knowledgeBaseService, DataSourceService dataSourceService, ReportService reportService, ModelGateway modelGateway) {
+    public AdminController(EnterpriseRepository repository, KnowledgeBaseService knowledgeBaseService, DataSourceService dataSourceService, ReportService reportService, ModelGateway modelGateway, ObjectProvider<VectorIndexService> vectorIndexProvider, ObjectProvider<McpWeatherService> mcpWeatherProvider) {
         this.repository = repository;
         this.knowledgeBaseService = knowledgeBaseService;
         this.dataSourceService = dataSourceService;
         this.reportService = reportService;
         this.modelGateway = modelGateway;
+        this.vectorIndexProvider = vectorIndexProvider;
+        this.mcpWeatherProvider = mcpWeatherProvider;
     }
 
     @GetMapping("/health")
-    public HealthResponse health() {
-        return new HealthResponse("ok", modelGateway.enabled() ? "openai-compatible" : "mock", repository.countKnowledgeBases(), repository.countDocuments(), repository.countChunks(), repository.countReports());
+    public Mono<HealthResponse> health() {
+        return Mono.fromCallable(() -> {
+            VectorIndexService vector = vectorIndexProvider.getIfAvailable();
+            McpWeatherService mcp = mcpWeatherProvider.getIfAvailable();
+            return new HealthResponse("ok", modelGateway.enabled() ? "spring-ai" : "mock", repository.getClass().getSimpleName(),
+                vector == null ? "disabled" : vector.status(), mcp == null ? "disabled" : mcp.configuredStatus(),
+                repository.countKnowledgeBases(), repository.countDocuments(), repository.countChunks(), repository.countReports());
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping("/admin/knowledge-bases") public List<KnowledgeBaseResponse> knowledgeBases() { return knowledgeBaseService.list(); }
@@ -40,19 +55,18 @@ public class AdminController {
     @GetMapping("/admin/documents") public List<KnowledgeDocumentResponse> documents(@RequestParam(required = false) Long knowledgeBaseId) { return knowledgeBaseService.listDocuments(knowledgeBaseId); }
 
     @PostMapping(path = "/admin/documents/batch-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public List<KnowledgeDocumentResponse> upload(@RequestParam long knowledgeBaseId, @RequestParam(required = false) String metadata, @RequestPart("files") MultipartFile[] files) throws IOException {
+    public Mono<List<KnowledgeDocumentResponse>> upload(@RequestParam long knowledgeBaseId, @RequestParam(required = false) String metadata, @RequestPart("files") Flux<FilePart> files) {
         Map<String, String> parsed = knowledgeBaseService.parseMetadata(metadata);
-        return java.util.Arrays.stream(files)
-            .map(file -> {
-                try { return knowledgeBaseService.importFile(knowledgeBaseId, file.getOriginalFilename(), file.getInputStream(), parsed); }
-                catch (IOException ex) { throw new IllegalArgumentException("Upload failed: " + file.getOriginalFilename(), ex); }
-            })
-            .toList();
+        return files.flatMapSequential(file -> DataBufferUtils.join(file.content())
+                .switchIfEmpty(Mono.error(new IllegalArgumentException("Uploaded document is empty: " + file.filename())))
+                .map(buffer -> readFile(file, buffer, knowledgeBaseId, parsed)))
+            .collectList()
+            .subscribeOn(Schedulers.boundedElastic());
     }
 
     @PostMapping("/admin/documents/text")
     public KnowledgeDocumentResponse importText(@RequestParam long knowledgeBaseId, @RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked") Map<String, String> metadata = (Map<String, String>) body.getOrDefault("metadata", Map.of());
+        Map<String, String> metadata = stringMap(body.get("metadata"));
         return knowledgeBaseService.importDocument(knowledgeBaseId, String.valueOf(body.getOrDefault("title", "Untitled document")), String.valueOf(body.getOrDefault("content", "")), metadata);
     }
 
@@ -71,4 +85,24 @@ public class AdminController {
 
     @GetMapping("/admin/report-runs") public List<ReportRunResponse> reportRuns() { return reportService.listRuns(); }
     @GetMapping("/reports/{id}") public ReportRunResponse report(@PathVariable long id) { return reportService.getRun(id); }
+
+    private Map<String, String> stringMap(Object value) {
+        if (value == null) return Map.of();
+        if (!(value instanceof Map<?, ?> raw)) throw new IllegalArgumentException("metadata must be a JSON object");
+        Map<String, String> result = new java.util.LinkedHashMap<>();
+        raw.forEach((key, item) -> {
+            if (key != null) result.put(String.valueOf(key), item == null ? "" : String.valueOf(item));
+        });
+        return result;
+    }
+
+    private KnowledgeDocumentResponse readFile(FilePart file, DataBuffer buffer, long knowledgeBaseId, Map<String, String> metadata) {
+        try {
+            byte[] bytes = new byte[buffer.readableByteCount()];
+            buffer.read(bytes);
+            return knowledgeBaseService.importFile(knowledgeBaseId, file.filename(), new java.io.ByteArrayInputStream(bytes), metadata);
+        } finally {
+            DataBufferUtils.release(buffer);
+        }
+    }
 }
