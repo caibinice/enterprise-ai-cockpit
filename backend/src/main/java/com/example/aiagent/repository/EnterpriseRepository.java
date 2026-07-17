@@ -18,6 +18,14 @@ public interface EnterpriseRepository {
     void deleteDocument(long id);
     List<RetrievedKnowledgeChunk> findAllChunks();
 
+    default List<RetrievedKnowledgeChunk> findChunksByDocumentId(long documentId) {
+        return findAllChunks().stream().filter(chunk -> chunk.documentId() == documentId).toList();
+    }
+
+    default List<RetrievedKnowledgeChunk> findChunksByKnowledgeBaseId(long knowledgeBaseId) {
+        return findAllChunks().stream().filter(chunk -> chunk.knowledgeBaseId() == knowledgeBaseId).toList();
+    }
+
     DataSourceResponse saveDataSource(DataSourceRequest request);
     List<DataSourceResponse> listDataSources();
     Optional<DataSourceResponse> findDataSource(long id);

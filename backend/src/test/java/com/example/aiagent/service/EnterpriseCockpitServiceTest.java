@@ -6,11 +6,13 @@ import com.example.aiagent.model.ReportTemplateRequest;
 import com.example.aiagent.repository.InMemoryEnterpriseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class EnterpriseCockpitServiceTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -29,6 +31,28 @@ class EnterpriseCockpitServiceTest {
         assertThat(salesHits).hasSize(1);
         assertThat(salesHits.get(0).title()).isEqualTo("monthly-sales.md");
         assertThat(salesHits.get(0).metadata()).containsEntry("region", "east");
+    }
+
+    @Test
+    void rejectsEmptyDocumentsAndSynchronizesVectorLifecycle() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        TrackingVectorIndex vectorIndex = new TrackingVectorIndex();
+        knowledgeBaseService.setVectorIndexService(vectorIndex);
+        long kbId = knowledgeBaseService.createKnowledgeBase(new KnowledgeBaseRequest("Vector KB", "", "VECTOR"));
+
+        assertThatThrownBy(() -> knowledgeBaseService.importDocument(kbId, "empty.md", "  \r\n ", Map.of()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Document content is empty");
+
+        var document = knowledgeBaseService.importDocument(kbId, "vector.md", "single vector chunk", Map.of("stage", "one"));
+        assertThat(vectorIndex.upserted).hasSize(1);
+
+        knowledgeBaseService.updateMetadata(document.id(), Map.of("stage", "two"));
+        assertThat(vectorIndex.upserted).hasSize(2);
+
+        knowledgeBaseService.deleteDocument(document.id());
+        assertThat(vectorIndex.deleted).containsExactly(vectorIndex.upserted.get(0).id());
     }
 
     @Test
@@ -77,5 +101,16 @@ class EnterpriseCockpitServiceTest {
         var chart = new MockModelGateway(objectMapper).chart("Sales \"Q1\"\ntrend", List.of());
 
         assertThat(objectMapper.readTree(chart).path("title").path("text").asText()).isEqualTo("Sales \"Q1\"\ntrend");
+    }
+
+    private static final class TrackingVectorIndex implements VectorIndexService {
+        private final List<com.example.aiagent.model.RetrievedKnowledgeChunk> upserted = new ArrayList<>();
+        private final List<Long> deleted = new ArrayList<>();
+
+        @Override public boolean enabled() { return true; }
+        @Override public void upsert(com.example.aiagent.model.RetrievedKnowledgeChunk chunk) { upserted.add(chunk); }
+        @Override public void delete(long chunkId) { deleted.add(chunkId); }
+        @Override public List<com.example.aiagent.model.RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, int topK) { return List.of(); }
+        @Override public String status() { return "test"; }
     }
 }

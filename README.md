@@ -84,7 +84,7 @@ $env:VECTOR_DATABASE_PASSWORD = '<postgresql-password>'
 mvn spring-boot:run
 ```
 
-本次远端安装使用 PostgreSQL 11.15 + pgvector 0.4.4（Alibaba Linux 3 的系统 PostgreSQL 版本限制导致没有使用 PGDG 的 PostgreSQL 16 包）。因此 SQL 使用 IVFFlat，不依赖 HNSW。若从本机直连远端 5432，需要同时放行云安全组；本次完整测试使用 SSH 隧道验证了真实查询链路。
+本次远端安装使用 PostgreSQL 11.15 + pgvector 0.4.4（Alibaba Linux 3 的系统 PostgreSQL 版本限制导致没有使用 PGDG 的 PostgreSQL 16 包），因此 SQL 使用 IVFFlat，不依赖 HNSW。2026-07-16 已确认本机可直接访问远端 5432，并以公开地址完成认证、向量写入、检索和删除回归；云安全组应只允许可信源地址，生产优先使用内网或 TLS。
 
 ## DeepSeek 与真实 SSE
 
@@ -127,7 +127,7 @@ Set-Location ..\frontend
 npm run build
 ```
 
-本次已验证：MySQL 新库和 7 张业务表、PostgreSQL `vector` 扩展与向量表、JDBC 写入、embedding upsert、pgvector 检索、WebFlux SSE、Spring AI + DeepSeek 上游 SSE、MCP 天气调用。真实链路测试结果可通过 `/api/health` 看到，例如 `JdbcEnterpriseRepository`、`pgvector=0.4.4` 和已发现的 `queryWeather` 工具。
+本次已验证：MySQL 新库和 7 张业务表、Flyway 在临时空库中完成 1 个迁移并创建 7 张业务表、PostgreSQL `vector` 扩展与向量表、JDBC 写入、embedding upsert、pgvector 公开地址直连检索、WebFlux SSE、Spring AI + DeepSeek 上游 SSE、MCP 天气、语音 Mock、报告和浏览器端知识库/聊天流程。真实链路测试结果可通过 `/api/health` 看到，例如 `JdbcEnterpriseRepository`、`pgvector=0.4.4` 和已发现的 `queryWeather` 工具。
 
 ## 仍需优化
 

@@ -9,11 +9,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -27,16 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class JdbcEnterpriseRepository implements EnterpriseRepository {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-    private final ObjectProvider<com.example.aiagent.service.VectorIndexService> vectorIndexProvider;
 
-    public JdbcEnterpriseRepository(
-        JdbcTemplate jdbcTemplate,
-        ObjectMapper objectMapper,
-        ObjectProvider<com.example.aiagent.service.VectorIndexService> vectorIndexProvider
-    ) {
+    public JdbcEnterpriseRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
-        this.vectorIndexProvider = vectorIndexProvider;
     }
 
     @Override
@@ -77,9 +69,6 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
     @Override
     @Transactional
     public void deleteKnowledgeBase(long id) {
-        jdbcTemplate.query("SELECT id FROM knowledge_chunks WHERE knowledge_base_id = ?", rs -> {
-            while (rs.next()) deleteVector(rs.getLong(1));
-        }, id);
         jdbcTemplate.update("DELETE FROM knowledge_bases WHERE id = ?", id);
     }
 
@@ -95,12 +84,10 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
         List<String> safeChunks = chunks == null ? List.of() : chunks;
         for (int i = 0; i < safeChunks.size(); i++) {
             String chunkText = nz(safeChunks.get(i));
-            long chunkId = insert("""
+            insert("""
                 INSERT INTO knowledge_chunks(document_id, knowledge_base_id, title, content, metadata, chunk_order)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """, documentId, knowledgeBaseId, nz(title), chunkText, safeMetadata, i);
-            upsertVector(new RetrievedKnowledgeChunk(chunkId, documentId, knowledgeBaseId, nz(title), chunkText, 0.0,
-                metadata == null ? Map.of() : new LinkedHashMap<>(metadata)));
         }
         return findDocument(documentId).orElseThrow();
     }
@@ -125,24 +112,27 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
         String serialized = json(metadata);
         jdbcTemplate.update("UPDATE knowledge_documents SET metadata = ? WHERE id = ?", serialized, id);
         jdbcTemplate.update("UPDATE knowledge_chunks SET metadata = ? WHERE document_id = ?", serialized, id);
-        jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks WHERE document_id = ?", rs -> {
-            while (rs.next()) upsertVector(new RetrievedKnowledgeChunk(rs.getLong("id"), rs.getLong("document_id"),
-                rs.getLong("knowledge_base_id"), rs.getString("title"), rs.getString("content"), 0.0, parseMetadata(rs.getString("metadata"))));
-        }, id);
     }
 
     @Override
     @Transactional
     public void deleteDocument(long id) {
-        jdbcTemplate.query("SELECT id FROM knowledge_chunks WHERE document_id = ?", rs -> {
-            while (rs.next()) deleteVector(rs.getLong(1));
-        }, id);
         jdbcTemplate.update("DELETE FROM knowledge_documents WHERE id = ?", id);
     }
 
     @Override
     public List<RetrievedKnowledgeChunk> findAllChunks() {
         return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks ORDER BY id", this::mapChunk);
+    }
+
+    @Override
+    public List<RetrievedKnowledgeChunk> findChunksByDocumentId(long documentId) {
+        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks WHERE document_id = ? ORDER BY id", this::mapChunk, documentId);
+    }
+
+    @Override
+    public List<RetrievedKnowledgeChunk> findChunksByKnowledgeBaseId(long knowledgeBaseId) {
+        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks WHERE knowledge_base_id = ? ORDER BY id", this::mapChunk, knowledgeBaseId);
     }
 
     @Override
@@ -254,14 +244,6 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
     }
 
     private long count(String table) { return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class); }
-
-    private void upsertVector(RetrievedKnowledgeChunk chunk) {
-        vectorIndexProvider.ifAvailable(service -> service.upsert(chunk));
-    }
-
-    private void deleteVector(long chunkId) {
-        vectorIndexProvider.ifAvailable(service -> service.delete(chunkId));
-    }
 
     private Map<String, String> parseMetadata(String raw) {
         try { return raw == null ? Map.of() : objectMapper.readValue(raw, new TypeReference<Map<String, String>>() {}); }

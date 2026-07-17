@@ -11,6 +11,7 @@ Spring Boot 3.5.3 + Java 17 的 WebFlux API。后端现在默认按真实持久�
 - `SpringAiModelGateway`：`ChatClient.stream().content()` 输出真实 Reactor 流。
 - `OpenAiCompatibleModelGateway`：可选的直接 WebClient SSE 网关，使用 `LLM_PROVIDER=openai-compatible`。
 - `McpWeatherService`：懒初始化 Spring AI MCP STDIO 客户端，连接 `mcp-servers/weather-mcp-server.js`。
+- WebFlux 控制器将 JDBC、Tika 和语音阻塞操作调度到 `boundedElastic`；批量文档上传使用临时文件串行解析，避免把整批文件同时聚合到堆内存。
 
 ## 配置
 
@@ -45,7 +46,7 @@ mysql --host <host> --port 3306 --user enterprise_ai_cockpit --password enterpri
 psql --host <host> --port 5432 --username enterprise_ai_cockpit --dbname enterprise_ai_cockpit_vector -f ..\database\postgresql\enterprise_ai_cockpit_vector.sql
 ```
 
-同内容的 Flyway MySQL 迁移位于 `src/main/resources/db/migration/mysql/`；pgvector 迁移位于 `src/main/resources/db/migration/postgresql/`。默认关闭 Flyway，避免未提供密码时启动失败。
+同内容的 Flyway MySQL 迁移位于 `src/main/resources/db/migration/mysql/`，运行时已包含 Flyway 11 所需的 `flyway-mysql` 模块；pgvector 迁移位于 `src/main/resources/db/migration/postgresql/`。默认关闭 Flyway，避免未提供密码时启动失败。
 
 ## API
 
@@ -88,11 +89,11 @@ mvn spring-boot:run
 mvn test
 ```
 
-已用真实远端 MySQL + SSH 隧道连接远端 PostgreSQL 做过链路测试：写入文档后 `/api/health` 能显示 `JdbcEnterpriseRepository`、`pgvector=0.4.4` 和向量行数增长；聊天 SSE 返回 `meta/token/references/done`；DeepSeek 实测返回 `DEEPSEEK_SSE_OK`；MCP 实测发现并调用 `queryWeather`。
+已用真实远端 MySQL 和公开地址直连远端 PostgreSQL 做过链路测试：写入文档后 `/api/health` 能显示 `JdbcEnterpriseRepository`、`pgvector=0.4.4` 和向量行数增长；聊天 SSE 返回 `meta/token/references/done`；DeepSeek 上游流没有触发 fallback；MCP 实测发现并调用 `queryWeather`。另在远端临时空库验证 Flyway 自动创建 7 张业务表和 `flyway_schema_history`，测试后已删除临时库。
 
 ## 已知边界
 
 1. 默认 embedding 只是可复现的本地实现，不等于生产语义 embedding。
 2. 报告数据源抽取、cron 任务和语音仍为 Mock/MVP 实现。
 3. 安全配置仍允许匿名访问，仅适合演示；生产需要认证、授权、密钥托管和最小权限。
-4. PostgreSQL 远端直连还需要云安全组放行 5432；不能放行时可使用 SSH 隧道。
+4. PostgreSQL 5432 已能远端直连；云安全组需要限制来源地址，生产优先使用内网或 TLS，避免把数据库长期暴露给公网。

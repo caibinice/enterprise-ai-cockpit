@@ -40,11 +40,9 @@ public class KnowledgeBaseService {
     public KnowledgeBaseResponse create(KnowledgeBaseRequest request) { return repository.saveKnowledgeBase(request); }
     public List<KnowledgeBaseResponse> list() { return repository.listKnowledgeBases(); }
     public void deleteKnowledgeBase(long id) {
-        if (vectorIndexService != null && vectorIndexService.enabled()) {
-            repository.findAllChunks().stream().filter(chunk -> chunk.knowledgeBaseId() == id)
-                .forEach(chunk -> vectorIndexService.delete(chunk.id()));
-        }
+        List<Long> chunkIds = repository.findChunksByKnowledgeBaseId(id).stream().map(RetrievedKnowledgeChunk::id).toList();
         repository.deleteKnowledgeBase(id);
+        deleteVectors(chunkIds);
     }
 
     public KnowledgeDocumentResponse importDocument(long knowledgeBaseId, String title, String content, Map<String, String> metadata) {
@@ -52,6 +50,9 @@ public class KnowledgeBaseService {
             .orElseThrow(() -> new IllegalArgumentException("Knowledge base not found: " + knowledgeBaseId));
         String safeTitle = title == null || title.isBlank() ? "Untitled document" : title.trim();
         String normalized = normalizeContent(content);
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException("Document content is empty: " + safeTitle);
+        }
         Map<String, String> safeMeta = metadata == null ? new LinkedHashMap<>() : new LinkedHashMap<>(metadata);
         safeMeta.putIfAbsent("source", safeTitle);
         KnowledgeDocumentResponse document = repository.saveDocument(knowledgeBaseId, safeTitle, normalized, safeMeta, chunk(normalized));
@@ -78,8 +79,9 @@ public class KnowledgeBaseService {
     }
     public void deleteDocument(long id) {
         ensureDocumentExists(id);
-        deleteDocumentVectors(id);
+        List<Long> chunkIds = repository.findChunksByDocumentId(id).stream().map(RetrievedKnowledgeChunk::id).toList();
         repository.deleteDocument(id);
+        deleteVectors(chunkIds);
     }
 
     public List<RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, Map<String, String> metadataFilter, int topK) {
@@ -187,13 +189,11 @@ public class KnowledgeBaseService {
 
     private void syncDocumentVectors(long documentId) {
         if (vectorIndexService == null || !vectorIndexService.enabled()) return;
-        repository.findAllChunks().stream().filter(chunk -> chunk.documentId() == documentId)
-            .forEach(vectorIndexService::upsert);
+        repository.findChunksByDocumentId(documentId).forEach(vectorIndexService::upsert);
     }
 
-    private void deleteDocumentVectors(long documentId) {
+    private void deleteVectors(List<Long> chunkIds) {
         if (vectorIndexService == null || !vectorIndexService.enabled()) return;
-        repository.findAllChunks().stream().filter(chunk -> chunk.documentId() == documentId)
-            .forEach(chunk -> vectorIndexService.delete(chunk.id()));
+        chunkIds.forEach(vectorIndexService::delete);
     }
 }
