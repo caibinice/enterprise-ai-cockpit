@@ -2,6 +2,10 @@
 
 企业知识问答与经营分析驾驶舱 Demo。当前版本已经从“内存仓库 + 本地拆分 SSE”改成了可落地的链路：MySQL/MariaDB 持久化业务数据、PostgreSQL + pgvector 保存向量、Spring AI `ChatClient` + WebFlux 输出真实上游流、Spring AI MCP Client 调用天气 STDIO MCP。
 
+生产环境固定在 `/smartCockpit/`，并由 Nginx 对整个路径启用 Basic
+Auth。低内存 Java 17 发布、SSE 代理与回滚说明见
+[`docs/production-deployment.md`](docs/production-deployment.md)。
+
 ## 现在项目做了什么
 
 - 知识库、文档、分块、metadata、数据源、报告运行记录和聊天消息通过 `EnterpriseRepository` 统一访问。

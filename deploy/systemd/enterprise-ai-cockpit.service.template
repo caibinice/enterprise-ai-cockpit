@@ -1,0 +1,28 @@
+[Unit]
+Description=Enterprise AI Cockpit
+After=network-online.target mariadb.service postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+Group=__APP_USER__
+WorkingDirectory=/opt/enterprise-ai-cockpit/current
+EnvironmentFile=/opt/enterprise-ai-cockpit/shared/app.env
+ExecStart=/usr/local/bin/java17 -Xms64m -Xmx160m -Xss256k -XX:+UseSerialGC -XX:MaxMetaspaceSize=72m -XX:MaxDirectMemorySize=20m -XX:ReservedCodeCacheSize=32m -XX:+ExitOnOutOfMemoryError -jar /opt/enterprise-ai-cockpit/current/app.jar
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+SuccessExitStatus=143
+MemoryHigh=280M
+MemoryMax=320M
+CPUQuota=60%
+TasksMax=90
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/enterprise-ai-cockpit/shared
+
+[Install]
+WantedBy=multi-user.target

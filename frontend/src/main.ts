@@ -15,6 +15,6 @@ const routes = [
 
 createApp(App)
   .use(createPinia())
-  .use(createRouter({ history: createWebHistory(), routes }))
+  .use(createRouter({ history: createWebHistory(import.meta.env.BASE_URL), routes }))
   .use(ElementPlus)
   .mount('#app');

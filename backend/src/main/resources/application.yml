@@ -8,14 +8,24 @@ spring:
     username: ${MYSQL_USER:enterprise_ai_cockpit}
     password: ${MYSQL_PASSWORD:change-me}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:2}
+      minimum-idle: ${DB_POOL_MIN_IDLE:0}
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:10000}
+      validation-timeout: ${DB_VALIDATION_TIMEOUT_MS:5000}
   flyway:
     enabled: ${FLYWAY_ENABLED:false}
     locations: classpath:db/migration/mysql
+    baseline-on-migrate: ${FLYWAY_BASELINE_ON_MIGRATE:true}
+    baseline-version: ${FLYWAY_BASELINE_VERSION:0}
   webflux:
     multipart:
       max-file-size: 50MB
       max-request-size: 200MB
       max-in-memory-size: 8MB
+  quartz:
+    properties:
+      org.quartz.threadPool.threadCount: ${QUARTZ_THREAD_COUNT:2}
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:${DEEPSEEK_API_KEY:demo-key}}
@@ -40,7 +50,9 @@ spring:
                 - ${MCP_WEATHER_SERVER:mcp-servers/weather-mcp-server.js}
 
 server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:8080}
+  forward-headers-strategy: native
 
 app:
   repository:

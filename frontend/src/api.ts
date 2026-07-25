@@ -1,4 +1,7 @@
-export const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '');
+const viteEnv = import.meta.env || {};
+export const API_BASE = (
+  viteEnv.VITE_API_BASE ?? viteEnv.BASE_URL ?? '/smartCockpit/'
+).replace(/\/+$/, '');
 
 async function responseError(res: Response) {
   const body = await res.text();
