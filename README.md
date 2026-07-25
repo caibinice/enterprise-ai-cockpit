@@ -2,8 +2,9 @@
 
 企业知识问答与经营分析驾驶舱 Demo。当前版本已经从“内存仓库 + 本地拆分 SSE”改成了可落地的链路：MySQL/MariaDB 持久化业务数据、PostgreSQL + pgvector 保存向量、Spring AI `ChatClient` + WebFlux 输出真实上游流、Spring AI MCP Client 调用天气 STDIO MCP。
 
-生产环境固定在 `/smartCockpit/`，并由 Nginx 对整个路径启用 Basic
-Auth。低内存 Java 17 发布、SSE 代理与回滚说明见
+生产环境固定在 `/smartCockpit/`，页面和只读接口公开；聊天、语音、
+知识导入、数据源与报告操作由后端签发 30 分钟操作令牌。低内存 Java 17
+发布、SSE 代理与回滚说明见
 [`docs/production-deployment.md`](docs/production-deployment.md)。
 
 ## 现在项目做了什么
@@ -135,7 +136,7 @@ npm run build
 
 ## 仍需优化
 
-1. **安全**：当前演示仍是 `permitAll`，需要认证、RBAC、租户隔离、审计、密钥托管、CORS 白名单和远端数据库最小权限。
+1. **安全**：浏览器敏感写操作已有统一口令保护；多人生产使用仍需要账号、RBAC、租户隔离、审计、密钥托管、CORS 白名单和远端数据库最小权限。
 2. **向量质量**：默认 local embedding 是确定性可复现实现，用于验证链路；生产应接入与 1536 维一致的真实 embedding 模型，并增加混合检索、重排、版本和删除补偿任务。
 3. **报告**：数据源抽取、cron 任务、重试、锁、幂等和报告模型调用仍是 MVP Mock。
 4. **可观测性**：补充 traceId、结构化日志、指标、SSE 断线续传和 API 契约测试。

@@ -9,4 +9,5 @@ credentials.txt
 **/credentials.txt
 credentials/*.txt
 *.secret
+.deploy/
 .idea

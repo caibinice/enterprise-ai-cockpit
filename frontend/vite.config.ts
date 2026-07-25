@@ -5,6 +5,7 @@ export default defineConfig({
   base: '/smartCockpit/',
   plugins: [vue()],
   build: {
+    sourcemap: false,
     rollupOptions: {
       output: {
         manualChunks(id) {

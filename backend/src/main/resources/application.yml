@@ -55,6 +55,10 @@ server:
   forward-headers-strategy: native
 
 app:
+  action-auth:
+    password: ${ACTION_PASSWORD:}
+    token-secret: ${ACTION_TOKEN_SECRET:}
+    token-ttl-minutes: ${ACTION_TOKEN_TTL_MINUTES:30}
   repository:
     mode: ${APP_REPOSITORY_MODE:mysql}
   llm:
