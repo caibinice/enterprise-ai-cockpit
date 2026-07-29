@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,35 +35,45 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
     @Override
     @Transactional
     public KnowledgeBaseResponse saveKnowledgeBase(KnowledgeBaseRequest request) {
-        long id = insert("INSERT INTO knowledge_bases(name, description, code) VALUES (?, ?, ?)",
-            request.name(), nz(request.description()), blankToDefault(request.code(), "KB-" + System.currentTimeMillis()));
+        long id = insert(
+            """
+                INSERT INTO knowledge_bases(name, description, code, business_type)
+                VALUES (?, ?, ?, ?)
+                """,
+            request.name(),
+            nz(request.description()),
+            blankToDefault(request.code(), "KB-" + System.currentTimeMillis()),
+            blankToDefault(request.businessType(), "通用业务")
+        );
         return findKnowledgeBase(id).orElseThrow();
     }
 
     @Override
     public List<KnowledgeBaseResponse> listKnowledgeBases() {
         return jdbcTemplate.query("""
-            SELECT kb.id, kb.name, kb.description, kb.code, kb.created_at,
+            SELECT kb.id, kb.name, kb.description, kb.code, kb.business_type, kb.created_at,
                    COUNT(d.id) AS document_count
             FROM knowledge_bases kb
             LEFT JOIN knowledge_documents d ON d.knowledge_base_id = kb.id
-            GROUP BY kb.id, kb.name, kb.description, kb.code, kb.created_at
+            GROUP BY kb.id, kb.name, kb.description, kb.code, kb.business_type, kb.created_at
             ORDER BY kb.created_at DESC, kb.id DESC
             """, (rs, row) -> new KnowledgeBaseResponse(rs.getLong("id"), rs.getString("name"),
-                rs.getString("description"), rs.getString("code"), rs.getLong("document_count"), instant(rs, "created_at")));
+                rs.getString("description"), rs.getString("code"), rs.getString("business_type"),
+                rs.getLong("document_count"), instant(rs, "created_at")));
     }
 
     @Override
     public Optional<KnowledgeBaseResponse> findKnowledgeBase(long id) {
         return jdbcTemplate.query("""
-            SELECT kb.id, kb.name, kb.description, kb.code, kb.created_at,
+            SELECT kb.id, kb.name, kb.description, kb.code, kb.business_type, kb.created_at,
                    COUNT(d.id) AS document_count
             FROM knowledge_bases kb
             LEFT JOIN knowledge_documents d ON d.knowledge_base_id = kb.id
             WHERE kb.id = ?
-            GROUP BY kb.id, kb.name, kb.description, kb.code, kb.created_at
+            GROUP BY kb.id, kb.name, kb.description, kb.code, kb.business_type, kb.created_at
             """, (rs, row) -> new KnowledgeBaseResponse(rs.getLong("id"), rs.getString("name"),
-                rs.getString("description"), rs.getString("code"), rs.getLong("document_count"), instant(rs, "created_at")), id)
+                rs.getString("description"), rs.getString("code"), rs.getString("business_type"),
+                rs.getLong("document_count"), instant(rs, "created_at")), id)
             .stream().findFirst();
     }
 
@@ -199,6 +210,32 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
     @Override
     public void saveChatMessage(String conversationId, String role, String content) {
         jdbcTemplate.update("INSERT INTO chat_messages(conversation_id, role, content) VALUES (?, ?, ?)", nz(conversationId), nz(role), nz(content));
+    }
+
+    @Override
+    public List<ConversationMessage> findChatMessages(String conversationId, int limit) {
+        int safeLimit = Math.min(20, Math.max(0, limit));
+        if (safeLimit == 0 || conversationId == null || conversationId.isBlank()) {
+            return List.of();
+        }
+        List<ConversationMessage> newestFirst = jdbcTemplate.query(
+            """
+                SELECT role, content, created_at
+                FROM chat_messages
+                WHERE conversation_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+            (rs, row) -> new ConversationMessage(
+                rs.getString("role"),
+                rs.getString("content"),
+                instant(rs, "created_at")
+            ),
+            conversationId,
+            safeLimit
+        );
+        Collections.reverse(newestFirst);
+        return newestFirst;
     }
 
     @Override public long countKnowledgeBases() { return count("knowledge_bases"); }

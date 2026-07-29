@@ -21,19 +21,29 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 @ConditionalOnProperty(prefix = "app.llm", name = "enabled", havingValue = "true")
 @ConditionalOnProperty(prefix = "app.llm", name = "provider", havingValue = "openai-compatible")
 public class OpenAiCompatibleModelGateway implements ModelGateway {
+    private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleModelGateway.class);
     private final LlmProperties properties;
+    private final ChatModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final WebClient webClient;
     private final MockModelGateway fallback;
 
-    public OpenAiCompatibleModelGateway(LlmProperties properties, ObjectMapper objectMapper, WebClient.Builder webClientBuilder) {
+    public OpenAiCompatibleModelGateway(
+        LlmProperties properties,
+        ChatModelCatalog modelCatalog,
+        ObjectMapper objectMapper,
+        WebClient.Builder webClientBuilder
+    ) {
         this.properties = properties;
+        this.modelCatalog = modelCatalog;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
         this.webClient = webClientBuilder.build();
@@ -46,17 +56,24 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
     }
 
     @Override
-    public String answer(String question, List<RetrievedKnowledgeChunk> references) {
-        if (!enabled()) return fallback.answer(question, references);
+    public String provider() {
+        return enabled() ? "openai-compatible" : "local-rag";
+    }
+
+    @Override
+    public String answer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
+        String selectedModel = modelCatalog.resolve(model);
+        if (!enabled()) return fallback.answer(question, references, selectedModel);
         try {
-            List<Map<String, String>> messages = new ArrayList<>();
-            messages.add(Map.of("role", "system", "content", "You are an enterprise AI cockpit assistant. Prefer the retrieved knowledge base evidence. If evidence is insufficient, say so clearly. Answer in the user's requested language."));
-            messages.add(Map.of("role", "user", "content", "Knowledge base evidence:\n" + buildContext(references) + "\nUser question:\n" + question));
             Map<String, Object> body = Map.of(
-                "model", StringUtils.hasText(properties.model()) ? properties.model() : "gpt-5.4-mini",
-                "messages", messages,
+                "model", selectedModel,
+                "messages", messages(question, references),
                 "temperature", 0.2,
-                "max_tokens", 1200
+                "max_tokens", maxTokens(selectedModel)
             );
             String json = objectMapper.writeValueAsString(body);
             HttpRequest request = HttpRequest.newBuilder()
@@ -69,9 +86,13 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() >= 300) throw new IllegalStateException("HTTP " + response.statusCode());
             JsonNode content = objectMapper.readTree(response.body()).path("choices").path(0).path("message").path("content");
-            return content.isTextual() ? content.asText() : fallback.answer(question, references);
+            return content.isTextual() && !content.asText().isBlank()
+                ? content.asText()
+                : fallback.answer(question, references, selectedModel);
         } catch (Exception ex) {
-            return "LLM call failed; falling back to local RAG summary. Error: " + ex.getMessage() + "\n\n" + fallback.answer(question, references);
+            log.warn("OpenAI-compatible chat request failed: {}", ex.getMessage());
+            return "模型服务暂时不可用，已切换为本地 RAG 摘要。\n\n"
+                + fallback.answer(question, references, selectedModel);
         }
     }
 
@@ -80,12 +101,17 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
      * DeepSeek exposes the same OpenAI-compatible /chat/completions stream contract.
      */
     @Override
-    public Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
-        if (!enabled()) return fallback.streamAnswer(question, references);
+    public Flux<String> streamAnswer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
+        String selectedModel = modelCatalog.resolve(model);
+        if (!enabled()) return fallback.streamAnswer(question, references, selectedModel);
         return Flux.defer(() -> webClient.post()
                 .uri(normalizeBaseUrl(properties.baseUrl()) + "/chat/completions")
                 .header("Authorization", "Bearer " + properties.apiKey())
-                .bodyValue(streamBody(question, references))
+                .bodyValue(streamBody(question, references, selectedModel))
                 .retrieve()
                 .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {})
                 .map(ServerSentEvent::data)
@@ -94,7 +120,13 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
                 .map(this::parseToken)
                 .filter(StringUtils::hasText))
             .subscribeOn(Schedulers.boundedElastic())
-            .onErrorResume(ex -> Flux.just("LLM stream failed; using local RAG fallback. Error: " + ex.getMessage() + "\n\n" + fallback.answer(question, references)));
+            .onErrorResume(ex -> {
+                log.warn("OpenAI-compatible chat stream failed: {}", ex.getMessage());
+                return Flux.just(
+                    "模型流式服务暂时不可用，已切换为本地 RAG 摘要。\n\n"
+                        + fallback.answer(question, references, selectedModel)
+                );
+            });
     }
 
     @Override
@@ -112,20 +144,28 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         return sb.toString();
     }
 
-    private Map<String, Object> streamBody(String question, List<RetrievedKnowledgeChunk> references) {
+    private Map<String, Object> streamBody(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
         return Map.of(
-            "model", StringUtils.hasText(properties.model()) ? properties.model() : "deepseek-v4-flash",
+            "model", model,
             "messages", messages(question, references),
             "temperature", 0.2,
-            "max_tokens", 1200,
+            "max_tokens", maxTokens(model),
             "stream", true
         );
     }
 
     private List<Map<String, String>> messages(String question, List<RetrievedKnowledgeChunk> references) {
         return List.of(
-            Map.of("role", "system", "content", "You are an enterprise AI cockpit assistant. Prefer the retrieved knowledge base evidence. If evidence is insufficient, say so clearly. Answer in the user's requested language."),
-            Map.of("role", "user", "content", "Knowledge base evidence:\n" + buildContext(references) + "\nUser question:\n" + question)
+            Map.of("role", "system", "content", """
+                你是企业智能座舱中的 RAG 助手。优先依据检索到的知识库证据回答，并在关键结论后标注引用编号。
+                不要编造证据中不存在的公司制度、数字或结论；证据不足时要明确说明。
+                工具结果属于实时上下文，可以使用但不要伪造工具调用。默认使用用户提问的语言，回答清晰、简洁、可执行。
+                """),
+            Map.of("role", "user", "content", "知识库证据：\n" + buildContext(references) + "\n用户问题：\n" + question)
         );
     }
 
@@ -142,5 +182,9 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
     private String normalizeBaseUrl(String baseUrl) {
         String value = StringUtils.hasText(baseUrl) ? baseUrl : "https://api.okinto.com/v1";
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private int maxTokens(String model) {
+        return ChatModelCatalog.PRO.equals(model) ? 4096 : 2048;
     }
 }

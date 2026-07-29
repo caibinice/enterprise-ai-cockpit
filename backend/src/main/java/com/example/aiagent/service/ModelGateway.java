@@ -6,9 +6,22 @@ import reactor.core.publisher.Flux;
 
 public interface ModelGateway {
     boolean enabled();
-    String answer(String question, List<RetrievedKnowledgeChunk> references);
+    default String provider() {
+        return enabled() ? "configured" : "local-rag";
+    }
+    String answer(String question, List<RetrievedKnowledgeChunk> references, String model);
+    default String answer(String question, List<RetrievedKnowledgeChunk> references) {
+        return answer(question, references, null);
+    }
+    default Flux<String> streamAnswer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
+        return Flux.just(answer(question, references, model));
+    }
     default Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
-        return Flux.just(answer(question, references));
+        return streamAnswer(question, references, null);
     }
     String chart(String question, List<RetrievedKnowledgeChunk> references);
 }

@@ -20,9 +20,9 @@ spring:
     baseline-version: ${FLYWAY_BASELINE_VERSION:0}
   webflux:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 200MB
-      max-in-memory-size: 8MB
+      max-file-size: 15MB
+      max-request-size: 45MB
+      max-in-memory-size: 2MB
   quartz:
     properties:
       org.quartz.threadPool.threadCount: ${QUARTZ_THREAD_COUNT:2}

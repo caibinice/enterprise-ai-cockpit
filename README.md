@@ -1,6 +1,9 @@
 # Enterprise AI Cockpit
 
-企业知识问答与经营分析驾驶舱 Demo。当前版本已经从“内存仓库 + 本地拆分 SSE”改成了可落地的链路：MySQL/MariaDB 持久化业务数据、PostgreSQL + pgvector 保存向量、Spring AI `ChatClient` + WebFlux 输出真实上游流、Spring AI MCP Client 调用天气 STDIO MCP。
+企业知识问答与经营分析驾驶舱。当前版本包含可落地的完整链路：
+MySQL/MariaDB 持久化业务数据、PostgreSQL + pgvector 保存向量、
+DeepSeek OpenAI-compatible API 输出真实 SSE、Spring AI MCP Client 调用
+STDIO 工具，以及按业务组织的知识库工作台。
 
 生产环境固定在 `/smartCockpit/`，页面和只读接口公开；聊天、语音、
 知识导入、数据源与报告操作由后端签发 30 分钟操作令牌。低内存 Java 17
@@ -12,9 +15,11 @@
 - 知识库、文档、分块、metadata、数据源、报告运行记录和聊天消息通过 `EnterpriseRepository` 统一访问。
 - `APP_REPOSITORY_MODE=mysql` 使用 `JdbcEnterpriseRepository`；`memory` 仍保留给无数据库演示和单元测试。
 - 文档导入后使用固定 1536 维 embedding 写入 PostgreSQL `enterprise_ai_vectors`，聊天优先走 pgvector cosine 检索，向量库不可用时回退 MySQL 关键词/CJK 检索。
-- Spring AI 1.0.0 的 `ChatClient.stream().content()` 通过 WebFlux 返回 `Flux<ServerSentEvent<String>>`。启用 DeepSeek 后，`token` 事件来自上游 `/chat/completions` 的真实流，不是把完整回答切片。
-- MCP Client 通过 `backend/mcp-servers/weather-mcp-server.js` 连接 STDIO 天气服务，提供 `GET /api/mcp/weather?city=常州`，聊天中开启工具并询问天气时也会调用它。
-- 前端支持聊天、引用、图表、知识库导入、报告和基础 MCP/向量状态展示。
+- 每次聊天可在 `deepseek-v4-flash` 与 `deepseek-v4-pro` 之间选择；服务端只接受白名单模型 ID，并按请求动态路由。`token` 事件来自上游 `/chat/completions` 的真实流。
+- 聊天会带入最近 8 条会话消息，优先使用所选知识库证据，并返回引用、模型与 MCP 调用轨迹。
+- MCP Client 通过 `backend/mcp-servers/weather-mcp-server.js` 连接 STDIO 服务，提供 Open-Meteo 实时天气、时区时间与不使用 `eval` 的安全计算器。
+- 知识库按业务类型隔离，支持文本和文件导入、元数据、自动分块、MySQL 元数据与 pgvector 生命周期同步；创建、导入和删除等关键操作由 Java 后端短期令牌保护。
+- 前端提供 Apple 风格响应式座舱、独立知识库工作台、模型/MCP 选择、流式停止、引用查看、图表、数据源与报告页面。
 
 ## 链路结构
 
@@ -24,10 +29,10 @@ flowchart LR
   API --> MYSQL[(MySQL / MariaDB\nJDBC Repository)]
   API --> EMB[Local or OpenAI-compatible\nEmbeddingService]
   EMB --> PG[(PostgreSQL + pgvector)]
-  API --> AI[Spring AI ChatClient]
+  API --> AI[Dynamic OpenAI-compatible Gateway]
   AI --> DS[DeepSeek OpenAI-compatible SSE]
   API --> MCP[Spring AI MCP Client]
-  MCP --> WEATHER[weather-mcp-server.js\nSTDIO]
+  MCP --> TOOLS[Weather / Time / Calculator\nSTDIO]
 ```
 
 ## 目录
@@ -39,8 +44,10 @@ backend/src/main/resources/     application.yml 与 Flyway 迁移
 database/mysql/                  MySQL/MariaDB 建表 SQL
 database/postgresql/             pgvector 建表 SQL
 frontend/                        Vue 3 管理驾驶舱
+scripts/remote/deploy_cockpit.py 仅发布座舱的原子远端部署
+scripts/seed-demo-data.ps1       幂等测试知识库与文档
 credentials.example.txt          脱敏配置模板
-credentials/credentials.txt     本机真实配置，已被 .gitignore 排除
+credentials.txt                  本机真实配置，已被 .gitignore 排除
 ```
 
 ## 快速启动
@@ -48,7 +55,7 @@ credentials/credentials.txt     本机真实配置，已被 .gitignore 排除
 环境要求：JDK 17+、Maven 3.9+、Node.js 20+。如果只验证无数据库内存模式：
 
 ```powershell
-Set-Location E:\codes\enterprise-ai-cockpit\backend
+Set-Location D:\codes\ai-agent-rag-demo\backend
 $env:APP_REPOSITORY_MODE = 'memory'
 $env:VECTOR_ENABLED = 'false'
 $env:LLM_ENABLED = 'false'
@@ -58,14 +65,16 @@ mvn spring-boot:run
 另开终端启动前端：
 
 ```powershell
-Set-Location E:\codes\enterprise-ai-cockpit\frontend
+Set-Location D:\codes\ai-agent-rag-demo\frontend
 npm ci
 npm run dev
 ```
 
 ## 真实远端数据库配置
 
-真实配置放在本机 `credentials/credentials.txt`，不要把密码写入 YAML、README 或 Git。模板见 [credentials.example.txt](./credentials.example.txt)。远端初始化 SQL 已执行过，后续环境可重复执行：
+真实配置放在本机忽略的 `credentials.txt`，不要把密码写入 YAML、README
+或 Git。模板见 [credentials.example.txt](./credentials.example.txt)。
+远端初始化 SQL 已执行过，后续环境可重复执行：
 
 ```powershell
 # MySQL/MariaDB
@@ -93,11 +102,12 @@ mvn spring-boot:run
 
 ## DeepSeek 与真实 SSE
 
-参考 demo `E:\codes\demo1\backend-spring-ai-alibaba` 的配置已作为本项目本地 credentials 的备用项，代码不读取该文件中的明文。启用 Spring AI：
+真实密钥只通过进程环境注入。生产推荐使用支持按请求切换模型的
+OpenAI-compatible 网关：
 
 ```powershell
 $env:LLM_ENABLED = 'true'
-$env:LLM_PROVIDER = 'spring-ai'
+$env:LLM_PROVIDER = 'openai-compatible'
 $env:OPENAI_BASE_URL = 'https://api.deepseek.com'
 $env:OPENAI_API_KEY = '<deepseek-api-key>'
 $env:LLM_MODEL = 'deepseek-v4-flash'
@@ -107,11 +117,13 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 
 - `POST /api/chat`：聚合响应。
 - `POST /api/chat/stream`：`meta`、`token`、`references`、`tool`、`chart`、`done` 事件。
+- `GET /api/chat/options`：可选模型与 MCP 工具目录。
 - `GET /api/health`：检查 Repository、pgvector 和 MCP 状态。
 
-`LLM_PROVIDER=openai-compatible` 也保留了直接 `WebClient` SSE 网关，便于与非 Spring AI 的 OpenAI-compatible 服务联调。
+请求体的 `model` 仅允许 `deepseek-v4-flash` 和 `deepseek-v4-pro`。
+不传时使用 `LLM_MODEL`；Pro 使用更高的输出预算以容纳推理阶段。
 
-## MCP 天气测试
+## MCP 工具测试
 
 ```powershell
 $env:MCP_ENABLED = 'true'
@@ -119,27 +131,47 @@ $env:MCP_WEATHER_SERVER = 'mcp-servers/weather-mcp-server.js'
 mvn spring-boot:run
 
 Invoke-RestMethod 'http://localhost:8080/api/mcp/status'
+Invoke-RestMethod 'http://localhost:8080/api/mcp/tools'
 Invoke-RestMethod 'http://localhost:8080/api/mcp/weather?city=常州'
 ```
 
 ## 测试与验证
 
 ```powershell
-Set-Location E:\codes\enterprise-ai-cockpit\backend
+Set-Location D:\codes\ai-agent-rag-demo\backend
 mvn test
 
 Set-Location ..\frontend
 npm run build
 ```
 
-本次已验证：MySQL 新库和 7 张业务表、Flyway 在临时空库中完成 1 个迁移并创建 7 张业务表、PostgreSQL `vector` 扩展与向量表、JDBC 写入、embedding upsert、pgvector 公开地址直连检索、WebFlux SSE、Spring AI + DeepSeek 上游 SSE、MCP 天气、语音 Mock、报告和浏览器端知识库/聊天流程。真实链路测试结果可通过 `/api/health` 看到，例如 `JdbcEnterpriseRepository`、`pgvector=0.4.4` 和已发现的 `queryWeather` 工具。
+发布前应验证：Java 单元/上下文测试、前端类型检查与生产构建、真实
+DeepSeek Flash/Pro SSE、MCP 工具、MySQL Flyway、pgvector 行数，以及浏览器端
+验证弹窗、知识库和聊天流程。远端状态可通过 `/api/health` 查看。
+
+## 仅发布座舱与演示数据
+
+完成本地构建后，从 PowerShell 7 调用座舱专用发布脚本。它只重启
+`enterprise-ai-cockpit.service`，不会重启 Nginx、量化或跨境服务；健康检查
+失败会切回上一 release：
+
+```powershell
+& D:\codes\ai-quantum\.venv\Scripts\python.exe scripts\remote\deploy_cockpit.py
+```
+
+测试数据脚本不会包含口令，需从忽略的本地配置注入当前进程，并按知识库
+代码和文档标题幂等写入：
+
+```powershell
+$env:ACTION_PASSWORD = '<operation-password>'
+pwsh -File scripts\seed-demo-data.ps1
+Remove-Item Env:ACTION_PASSWORD
+```
 
 ## 仍需优化
 
-1. **安全**：浏览器敏感写操作已有统一口令保护；多人生产使用仍需要账号、RBAC、租户隔离、审计、密钥托管、CORS 白名单和远端数据库最小权限。
-2. **向量质量**：默认 local embedding 是确定性可复现实现，用于验证链路；生产应接入与 1536 维一致的真实 embedding 模型，并增加混合检索、重排、版本和删除补偿任务。
-3. **报告**：数据源抽取、cron 任务、重试、锁、幂等和报告模型调用仍是 MVP Mock。
-4. **可观测性**：补充 traceId、结构化日志、指标、SSE 断线续传和 API 契约测试。
+已完成项、遗留风险和建议优先级见
+[`docs/project-review-2026-07-30.md`](docs/project-review-2026-07-30.md)。
 
 ## 参考
 

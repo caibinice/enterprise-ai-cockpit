@@ -4,7 +4,9 @@ import com.example.aiagent.model.*;
 import com.example.aiagent.repository.EnterpriseRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,8 +20,9 @@ public class AiChatService {
     private final EnterpriseRepository repository;
     private final KnowledgeBaseService knowledgeBaseService;
     private final ModelGateway modelGateway;
+    private final ChatModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
-    private final McpWeatherService mcpWeatherService;
+    private final McpToolService mcpToolService;
     @Value("${app.rag.top-k:6}")
     private int topK = 6;
 
@@ -28,14 +31,16 @@ public class AiChatService {
         EnterpriseRepository repository,
         KnowledgeBaseService knowledgeBaseService,
         ModelGateway modelGateway,
+        ChatModelCatalog modelCatalog,
         ObjectMapper objectMapper,
-        ObjectProvider<McpWeatherService> mcpWeatherService
+        ObjectProvider<McpToolService> mcpToolService
     ) {
         this.repository = repository;
         this.knowledgeBaseService = knowledgeBaseService;
         this.modelGateway = modelGateway;
+        this.modelCatalog = modelCatalog;
         this.objectMapper = objectMapper;
-        this.mcpWeatherService = mcpWeatherService.getIfAvailable();
+        this.mcpToolService = mcpToolService.getIfAvailable();
     }
 
     /** Compatibility helper for service-level tests. */
@@ -44,8 +49,17 @@ public class AiChatService {
         this.repository = repository;
         this.knowledgeBaseService = knowledgeBaseService;
         this.modelGateway = modelGateway;
+        this.modelCatalog = new ChatModelCatalog(
+            new com.example.aiagent.config.LlmProperties(
+                false,
+                "mock",
+                "",
+                "",
+                ChatModelCatalog.FLASH
+            )
+        );
         this.objectMapper = objectMapper;
-        this.mcpWeatherService = null;
+        this.mcpToolService = null;
     }
 
     /**
@@ -62,9 +76,18 @@ public class AiChatService {
         return Flux.defer(() -> {
             ChatContext context = prepare(request);
             StringBuilder answer = new StringBuilder();
-            Flux<StreamEvent> meta = Flux.just(new StreamEvent("meta", json(MapLike.of(
-                "conversationId", context.conversationId(), "llmEnabled", modelGateway.enabled()))));
-            Flux<StreamEvent> tokens = modelGateway.streamAnswer(context.modelQuestion(), context.references())
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("conversationId", context.conversationId());
+            metadata.put("llmEnabled", modelGateway.enabled());
+            metadata.put("model", context.model());
+            metadata.put("knowledgeBaseCount", request.knowledgeBaseIds() == null ? 0 : request.knowledgeBaseIds().size());
+            metadata.put("mcpToolIds", request.mcpToolIds() == null ? List.of() : request.mcpToolIds());
+            Flux<StreamEvent> meta = Flux.just(new StreamEvent("meta", json(metadata)));
+            Flux<StreamEvent> tokens = modelGateway.streamAnswer(
+                    context.modelQuestion(),
+                    context.references(),
+                    context.model()
+                )
                 .filter(token -> token != null && !token.isEmpty())
                 .doOnNext(answer::append)
                 .map(token -> new StreamEvent("token", token));
@@ -74,13 +97,15 @@ public class AiChatService {
                 repository.saveChatMessage(context.conversationId(), "assistant", finalAnswer);
                 List<StreamEvent> events = new ArrayList<>();
                 events.add(new StreamEvent("references", json(context.references())));
-                if (request.enableTools()) {
-                    events.add(new StreamEvent("tool", context.toolMessage() == null || context.toolMessage().isBlank()
-                        ? "Internal tools enabled: report lookup, data-source snapshot, and safe read-only short query."
-                        : context.toolMessage()));
-                }
+                context.toolResults().forEach(result ->
+                    events.add(new StreamEvent("tool", json(result))));
                 if (request.enableChart()) events.add(new StreamEvent("chart", modelGateway.chart(request.message(), context.references())));
-                events.add(new StreamEvent("done", json(MapLike.of("conversationId", context.conversationId()))));
+                events.add(new StreamEvent("done", json(Map.of(
+                    "conversationId",
+                    context.conversationId(),
+                    "model",
+                    context.model()
+                ))));
                 return Flux.fromIterable(events);
             });
             return Flux.concat(meta, tokens, tail);
@@ -89,7 +114,11 @@ public class AiChatService {
 
     public ChatResponse chat(ChatStreamRequest request) {
         ChatContext context = prepare(request);
-        String answer = modelGateway.answer(context.modelQuestion(), context.references());
+        String answer = modelGateway.answer(
+            context.modelQuestion(),
+            context.references(),
+            context.model()
+        );
         repository.saveChatMessage(context.conversationId(), "user", request.message());
         repository.saveChatMessage(context.conversationId(), "assistant", answer);
         String chart = request.enableChart() ? modelGateway.chart(request.message(), context.references()) : null;
@@ -99,19 +128,62 @@ public class AiChatService {
     private ChatContext prepare(ChatStreamRequest request) {
         String conversationId = request.conversationId() == null || request.conversationId().isBlank()
             ? UUID.randomUUID().toString() : request.conversationId();
+        String model = modelCatalog.resolve(request.model());
         List<RetrievedKnowledgeChunk> references = knowledgeBaseService.search(request.message(), request.knowledgeBaseIds(), request.metadataFilter(), topK);
-        String toolMessage = null;
-        if (request.enableTools() && mcpWeatherService != null) {
-            try {
-                toolMessage = mcpWeatherService.queryIfRequested(request.message());
-            } catch (RuntimeException ex) {
-                toolMessage = "MCP weather call failed: " + ex.getMessage();
-            }
+        List<String> selectedToolIds = request.mcpToolIds() == null
+            ? List.of()
+            : request.mcpToolIds();
+        if (request.enableTools() && selectedToolIds.isEmpty()) {
+            selectedToolIds = List.of("weather");
         }
-        String modelQuestion = toolMessage == null || toolMessage.isBlank()
-            ? request.message()
-            : request.message() + "\n\n" + toolMessage;
-        return new ChatContext(conversationId, references, modelQuestion, toolMessage);
+        List<McpExecutionResult> toolResults =
+            request.enableTools() && mcpToolService != null
+                ? mcpToolService.executeSelected(request.message(), selectedToolIds)
+                : List.of();
+        List<ConversationMessage> history = repository.findChatMessages(
+            conversationId,
+            8
+        );
+        String modelQuestion = buildQuestion(history, request.message(), toolResults);
+        return new ChatContext(
+            conversationId,
+            model,
+            references,
+            modelQuestion,
+            toolResults
+        );
+    }
+
+    private String buildQuestion(
+        List<ConversationMessage> history,
+        String question,
+        List<McpExecutionResult> toolResults
+    ) {
+        StringBuilder prompt = new StringBuilder();
+        if (history != null && !history.isEmpty()) {
+            prompt.append("最近对话：\n");
+            history.forEach(message -> prompt
+                .append("assistant".equals(message.role()) ? "助手" : "用户")
+                .append("：")
+                .append(message.content())
+                .append('\n'));
+            prompt.append('\n');
+        }
+        List<McpExecutionResult> successfulTools = toolResults.stream()
+            .filter(result -> "success".equals(result.status()))
+            .toList();
+        if (!successfulTools.isEmpty()) {
+            prompt.append("本轮 MCP 工具结果：\n");
+            successfulTools.forEach(result -> prompt
+                .append("- ")
+                .append(result.name())
+                .append("：")
+                .append(result.output())
+                .append('\n'));
+            prompt.append('\n');
+        }
+        prompt.append("当前问题：\n").append(question);
+        return prompt.toString();
     }
 
     private String json(Object value) {
@@ -119,9 +191,11 @@ public class AiChatService {
         catch (Exception ex) { return String.valueOf(value); }
     }
 
-    private record ChatContext(String conversationId, List<RetrievedKnowledgeChunk> references, String modelQuestion, String toolMessage) {}
-    private record MapLike() {
-        static java.util.Map<String, Object> of(String k1, Object v1) { return java.util.Map.of(k1, v1); }
-        static java.util.Map<String, Object> of(String k1, Object v1, String k2, Object v2) { return java.util.Map.of(k1, v1, k2, v2); }
-    }
+    private record ChatContext(
+        String conversationId,
+        String model,
+        List<RetrievedKnowledgeChunk> references,
+        String modelQuestion,
+        List<McpExecutionResult> toolResults
+    ) {}
 }

@@ -72,6 +72,12 @@ public class KnowledgeBaseService {
     }
 
     public List<KnowledgeDocumentResponse> listDocuments(Long knowledgeBaseId) { return repository.listDocuments(knowledgeBaseId); }
+    public KnowledgeDocumentResponse getDocument(long id) {
+        return repository.findDocument(id)
+            .orElseThrow(() -> new IllegalArgumentException(
+                "Document not found: " + id
+            ));
+    }
     public void updateMetadata(long id, Map<String, String> metadata) {
         ensureDocumentExists(id);
         repository.updateDocumentMetadata(id, metadata);

@@ -6,6 +6,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -18,15 +19,18 @@ import reactor.core.scheduler.Schedulers;
 public class SpringAiModelGateway implements ModelGateway {
     private final ChatClient chatClient;
     private final com.example.aiagent.config.LlmProperties properties;
+    private final ChatModelCatalog modelCatalog;
     private final MockModelGateway fallback;
 
     public SpringAiModelGateway(
         ChatClient.Builder chatClientBuilder,
         com.example.aiagent.config.LlmProperties properties,
+        ChatModelCatalog modelCatalog,
         com.fasterxml.jackson.databind.ObjectMapper objectMapper
     ) {
         this.chatClient = chatClientBuilder.build();
         this.properties = properties;
+        this.modelCatalog = modelCatalog;
         this.fallback = new MockModelGateway(objectMapper);
     }
 
@@ -39,23 +43,44 @@ public class SpringAiModelGateway implements ModelGateway {
     }
 
     @Override
-    public String answer(String question, List<RetrievedKnowledgeChunk> references) {
-        if (!enabled()) return fallback.answer(question, references);
+    public String provider() {
+        return enabled() ? "spring-ai" : "local-rag";
+    }
+
+    @Override
+    public String answer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
+        String selectedModel = modelCatalog.resolve(model);
+        if (!enabled()) return fallback.answer(question, references, selectedModel);
         try {
-            String content = request(question, references).call().content();
-            return content == null || content.isBlank() ? fallback.answer(question, references) : content;
+            String content = request(question, references, selectedModel).call().content();
+            return content == null || content.isBlank()
+                ? fallback.answer(question, references, selectedModel)
+                : content;
         } catch (Exception ex) {
-            return "LLM call failed; falling back to local RAG summary. Error: " + ex.getMessage() + "\n\n" + fallback.answer(question, references);
+            return "模型服务暂时不可用，已切换为本地 RAG 摘要。\n\n"
+                + fallback.answer(question, references, selectedModel);
         }
     }
 
     @Override
-    public Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
-        if (!enabled()) return fallback.streamAnswer(question, references);
-        return Flux.defer(() -> request(question, references).stream().content())
+    public Flux<String> streamAnswer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
+        String selectedModel = modelCatalog.resolve(model);
+        if (!enabled()) return fallback.streamAnswer(question, references, selectedModel);
+        return Flux.defer(() -> request(question, references, selectedModel).stream().content())
             .filter(text -> text != null && !text.isEmpty())
             .subscribeOn(Schedulers.boundedElastic())
-            .onErrorResume(ex -> Flux.just("LLM stream failed; using local RAG fallback. Error: " + ex.getMessage() + "\n\n" + fallback.answer(question, references)));
+            .onErrorResume(ex -> Flux.just(
+                "模型流式服务暂时不可用，已切换为本地 RAG 摘要。\n\n"
+                    + fallback.answer(question, references, selectedModel)
+            ));
     }
 
     @Override
@@ -63,12 +88,22 @@ public class SpringAiModelGateway implements ModelGateway {
         return fallback.chart(question, references);
     }
 
-    private ChatClient.ChatClientRequestSpec request(String question, List<RetrievedKnowledgeChunk> references) {
+    private ChatClient.ChatClientRequestSpec request(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
         List<Message> messages = List.of(
-            new SystemMessage("You are an enterprise AI cockpit assistant. Prefer retrieved knowledge base evidence. If evidence is insufficient, say so clearly. Answer in the user's requested language."),
-            new UserMessage("Knowledge base evidence:\n" + buildContext(references) + "\nUser question:\n" + question)
+            new SystemMessage(systemPrompt()),
+            new UserMessage("知识库证据：\n" + buildContext(references) + "\n用户问题：\n" + question)
         );
-        return chatClient.prompt().messages(messages);
+        int maxTokens = ChatModelCatalog.PRO.equals(model) ? 4096 : 2048;
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
+            .model(model)
+            .temperature(0.2)
+            .maxTokens(maxTokens)
+            .build();
+        return chatClient.prompt().messages(messages).options(options);
     }
 
     private String buildContext(List<RetrievedKnowledgeChunk> references) {
@@ -79,5 +114,13 @@ public class SpringAiModelGateway implements ModelGateway {
                 .append(ref.content()).append("\nmetadata=").append(ref.metadata()).append("\n\n");
         }
         return context.toString();
+    }
+
+    private String systemPrompt() {
+        return """
+            你是企业智能座舱中的 RAG 助手。优先依据检索到的知识库证据回答，并在关键结论后标注引用编号。
+            不要编造证据中不存在的公司制度、数字或结论；证据不足时要明确说明。
+            工具结果属于实时上下文，可以使用但不要伪造工具调用。默认使用用户提问的语言，回答清晰、简洁、可执行。
+            """;
     }
 }

@@ -28,8 +28,7 @@ if (-not $SkipInstall) {
   Pop-Location
 }
 
-$shell = (Get-Command pwsh -ErrorAction SilentlyContinue)?.Source
-if (-not $shell) { $shell = (Get-Command powershell -ErrorAction Stop).Source }
+$shell = (Get-Command pwsh -ErrorAction Stop).Source
 
 Start-Process $shell -ArgumentList '-NoLogo','-NoProfile','-NoExit','-Command',"Set-Location -LiteralPath '$backend'; `$env:APP_REPOSITORY_MODE='$repositoryMode'; `$env:VECTOR_ENABLED='$vectorEnabled'; `$env:FLYWAY_ENABLED='$flywayEnabled'; mvn spring-boot:run" -WindowStyle Normal
 Start-Sleep -Seconds 8

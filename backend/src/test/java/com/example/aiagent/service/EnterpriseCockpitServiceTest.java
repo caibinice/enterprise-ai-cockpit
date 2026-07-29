@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,6 +32,7 @@ class EnterpriseCockpitServiceTest {
         assertThat(salesHits).hasSize(1);
         assertThat(salesHits.get(0).title()).isEqualTo("monthly-sales.md");
         assertThat(salesHits.get(0).metadata()).containsEntry("region", "east");
+        assertThat(knowledgeBaseService.list().get(0).businessType()).isEqualTo("通用业务");
     }
 
     @Test
@@ -86,6 +88,56 @@ class EnterpriseCockpitServiceTest {
     }
 
     @Test
+    void chatUsesSelectedModelAndRecentConversationHistory() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        CapturingModelGateway gateway = new CapturingModelGateway();
+        AiChatService chatService = new AiChatService(
+            repository,
+            knowledgeBaseService,
+            gateway,
+            objectMapper
+        );
+        long kbId = knowledgeBaseService.createKnowledgeBase(
+            new KnowledgeBaseRequest("Support KB", "", "SUPPORT", "客户服务")
+        );
+        knowledgeBaseService.importDocument(
+            kbId,
+            "refund.md",
+            "退款申请应在签收后七天内提交。",
+            Map.of("category", "policy")
+        );
+
+        chatService.chat(new ChatStreamRequest(
+            "conversation-1",
+            "退款期限是什么？",
+            ChatModelCatalog.FLASH,
+            List.of(kbId),
+            Map.of(),
+            List.of(),
+            false,
+            false
+        ));
+        chatService.chat(new ChatStreamRequest(
+            "conversation-1",
+            "刚才的规则适用于谁？",
+            ChatModelCatalog.PRO,
+            List.of(kbId),
+            Map.of(),
+            List.of(),
+            false,
+            false
+        ));
+
+        assertThat(gateway.lastModel).isEqualTo(ChatModelCatalog.PRO);
+        assertThat(gateway.lastQuestion)
+            .contains("最近对话")
+            .contains("退款期限是什么？")
+            .contains("当前问题")
+            .contains("刚才的规则适用于谁？");
+    }
+
+    @Test
     void speechMockRoundTripWorksWithoutProviderKey() {
         SpeechService speechService = new SpeechService(objectMapper);
 
@@ -112,5 +164,40 @@ class EnterpriseCockpitServiceTest {
         @Override public void delete(long chunkId) { deleted.add(chunkId); }
         @Override public List<com.example.aiagent.model.RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, int topK) { return List.of(); }
         @Override public String status() { return "test"; }
+    }
+
+    private static final class CapturingModelGateway implements ModelGateway {
+        private String lastQuestion;
+        private String lastModel;
+
+        @Override public boolean enabled() { return true; }
+
+        @Override
+        public String answer(
+            String question,
+            List<com.example.aiagent.model.RetrievedKnowledgeChunk> references,
+            String model
+        ) {
+            lastQuestion = question;
+            lastModel = model;
+            return "captured";
+        }
+
+        @Override
+        public Flux<String> streamAnswer(
+            String question,
+            List<com.example.aiagent.model.RetrievedKnowledgeChunk> references,
+            String model
+        ) {
+            return Flux.just(answer(question, references, model));
+        }
+
+        @Override
+        public String chart(
+            String question,
+            List<com.example.aiagent.model.RetrievedKnowledgeChunk> references
+        ) {
+            return "{}";
+        }
     }
 }

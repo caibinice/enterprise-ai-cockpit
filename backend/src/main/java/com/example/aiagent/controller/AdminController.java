@@ -31,24 +31,24 @@ public class AdminController {
     private final ReportService reportService;
     private final ModelGateway modelGateway;
     private final ObjectProvider<VectorIndexService> vectorIndexProvider;
-    private final ObjectProvider<McpWeatherService> mcpWeatherProvider;
+    private final ObjectProvider<McpToolService> mcpToolProvider;
 
-    public AdminController(EnterpriseRepository repository, KnowledgeBaseService knowledgeBaseService, DataSourceService dataSourceService, ReportService reportService, ModelGateway modelGateway, ObjectProvider<VectorIndexService> vectorIndexProvider, ObjectProvider<McpWeatherService> mcpWeatherProvider) {
+    public AdminController(EnterpriseRepository repository, KnowledgeBaseService knowledgeBaseService, DataSourceService dataSourceService, ReportService reportService, ModelGateway modelGateway, ObjectProvider<VectorIndexService> vectorIndexProvider, ObjectProvider<McpToolService> mcpToolProvider) {
         this.repository = repository;
         this.knowledgeBaseService = knowledgeBaseService;
         this.dataSourceService = dataSourceService;
         this.reportService = reportService;
         this.modelGateway = modelGateway;
         this.vectorIndexProvider = vectorIndexProvider;
-        this.mcpWeatherProvider = mcpWeatherProvider;
+        this.mcpToolProvider = mcpToolProvider;
     }
 
     @GetMapping("/health")
     public Mono<HealthResponse> health() {
         return fromBlocking(() -> {
             VectorIndexService vector = vectorIndexProvider.getIfAvailable();
-            McpWeatherService mcp = mcpWeatherProvider.getIfAvailable();
-            return new HealthResponse("ok", modelGateway.enabled() ? "spring-ai" : "mock", repository.getClass().getSimpleName(),
+            McpToolService mcp = mcpToolProvider.getIfAvailable();
+            return new HealthResponse("ok", modelGateway.provider(), repository.getClass().getSimpleName(),
                 vector == null ? "disabled" : vector.status(), mcp == null ? "disabled" : mcp.configuredStatus(),
                 repository.countKnowledgeBases(), repository.countDocuments(), repository.countChunks(), repository.countReports());
         });
@@ -58,7 +58,20 @@ public class AdminController {
     @PostMapping("/admin/knowledge-bases") public Mono<KnowledgeBaseResponse> createKnowledgeBase(@Valid @RequestBody KnowledgeBaseRequest request) { return fromBlocking(() -> knowledgeBaseService.create(request)); }
     @DeleteMapping("/admin/knowledge-bases/{id}") public Mono<Void> deleteKnowledgeBase(@PathVariable long id) { return runBlocking(() -> knowledgeBaseService.deleteKnowledgeBase(id)); }
 
-    @GetMapping("/admin/documents") public Mono<List<KnowledgeDocumentResponse>> documents(@RequestParam(required = false) Long knowledgeBaseId) { return fromBlocking(() -> knowledgeBaseService.listDocuments(knowledgeBaseId)); }
+    @GetMapping("/admin/documents")
+    public Mono<List<KnowledgeDocumentSummaryResponse>> documents(
+        @RequestParam(required = false) Long knowledgeBaseId
+    ) {
+        return fromBlocking(() -> knowledgeBaseService.listDocuments(knowledgeBaseId)
+            .stream()
+            .map(KnowledgeDocumentSummaryResponse::from)
+            .toList());
+    }
+
+    @GetMapping("/admin/documents/{id}")
+    public Mono<KnowledgeDocumentResponse> document(@PathVariable long id) {
+        return fromBlocking(() -> knowledgeBaseService.getDocument(id));
+    }
 
     @PostMapping(path = "/admin/documents/batch-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Mono<List<KnowledgeDocumentResponse>> upload(@RequestParam long knowledgeBaseId, @RequestParam(required = false) String metadata, @RequestPart("files") Flux<FilePart> files) {

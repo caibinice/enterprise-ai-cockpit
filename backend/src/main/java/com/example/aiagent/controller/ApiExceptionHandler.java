@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.support.WebExchangeBindException;
 import org.springframework.web.server.ServerWebInputException;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -28,6 +29,15 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ServerWebInputException.class)
     ResponseEntity<Map<String, Object>> malformedReactiveInput(ServerWebInputException ex) {
         return response(HttpStatus.BAD_REQUEST, "Request body or multipart input is invalid");
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<Map<String, Object>> responseStatus(ResponseStatusException ex) {
+        HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
+        return response(
+            status == null ? HttpStatus.INTERNAL_SERVER_ERROR : status,
+            ex.getReason()
+        );
     }
 
     private ResponseEntity<Map<String, Object>> response(HttpStatus status, String message) {

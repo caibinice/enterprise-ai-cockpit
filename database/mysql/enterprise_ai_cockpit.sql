@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     name VARCHAR(200) NOT NULL,
     description VARCHAR(1000) NOT NULL DEFAULT '',
     code VARCHAR(100) NOT NULL,
+    business_type VARCHAR(100) NOT NULL DEFAULT '通用业务',
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
     UNIQUE KEY uk_knowledge_bases_code (code)

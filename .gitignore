@@ -10,4 +10,8 @@ credentials.txt
 credentials/*.txt
 *.secret
 .deploy/
+.playwright-cli/
+output/
+__pycache__/
+*.pyc
 .idea

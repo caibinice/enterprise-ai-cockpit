@@ -4,14 +4,14 @@
 `/smartCockpit/api/`，由 Nginx 代理到 `127.0.0.1:8080`。SSE location
 必须关闭 buffering 和响应缓存，并把读取超时延长到 10 分钟。
 
-本地使用 Java 17、Maven 与 Node 完成测试和构建，只把可执行 JAR 和
-`frontend/dist` 上传到：
+本地使用 Java 17、Maven 与 Node 完成测试和构建，只把可执行 JAR、
+`frontend/dist` 与 `backend/mcp-servers` 上传到：
 
 ```text
 /opt/enterprise-ai-cockpit/releases/<commit>/
 ```
 
-服务器只安装 OpenJDK 17 headless。环境变量保存在
+服务器安装 OpenJDK 17 headless 与 Node.js（用于 STDIO MCP）。环境变量保存在
 `/opt/enterprise-ai-cockpit/shared/app.env`，生产示例见
 `deploy/application-production.env.example`。真实 MySQL、PostgreSQL、
 DeepSeek/OpenAI-compatible 和 embedding 密钥不得提交。
@@ -34,3 +34,8 @@ curl -fsS http://127.0.0.1:8080/api/health
 ```
 
 不要在公网安全组放开 8080。
+
+当前仓库的 `scripts/remote/deploy_cockpit.py` 是低影响发布入口：仅安装并
+重启 `enterprise-ai-cockpit.service`，不会改动 Nginx 配置，也不会重启
+`ai-quant-api` 或 `crossborder-trend`。脚本在发布前后核对这三个服务的状态，
+并在座舱健康检查失败时自动切回上一 release。

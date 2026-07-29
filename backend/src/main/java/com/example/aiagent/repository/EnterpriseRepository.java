@@ -40,6 +40,7 @@ public interface EnterpriseRepository {
     Optional<ReportRunResponse> findReportRun(long id);
 
     void saveChatMessage(String conversationId, String role, String content);
+    List<ConversationMessage> findChatMessages(String conversationId, int limit);
     long countKnowledgeBases();
     long countDocuments();
     long countChunks();

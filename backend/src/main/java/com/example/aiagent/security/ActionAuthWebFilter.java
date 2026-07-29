@@ -45,6 +45,10 @@ public class ActionAuthWebFilter implements WebFilter {
             .getBytes(StandardCharsets.UTF_8);
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         exchange.getResponse().getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        exchange.getResponse().getHeaders().set(
+            "WWW-Authenticate",
+            "Bearer realm=\"enterprise-ai-cockpit\""
+        );
         return exchange.getResponse()
             .writeWith(Mono.just(exchange.getResponse().bufferFactory().wrap(body)));
     }

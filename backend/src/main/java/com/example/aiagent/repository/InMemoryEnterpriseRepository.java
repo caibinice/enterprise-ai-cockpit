@@ -24,7 +24,7 @@ public class InMemoryEnterpriseRepository implements EnterpriseRepository {
     private final Map<Long, DataSourceResponse> dataSources = new LinkedHashMap<>();
     private final Map<Long, ReportTemplateResponse> reportTemplates = new LinkedHashMap<>();
     private final Map<Long, ReportRunResponse> reportRuns = new LinkedHashMap<>();
-    private final List<Map<String, String>> chatMessages = new ArrayList<>();
+    private final List<Map<String, Object>> chatMessages = new ArrayList<>();
 
     public InMemoryEnterpriseRepository(ObjectMapper objectMapper) {
     }
@@ -32,7 +32,15 @@ public class InMemoryEnterpriseRepository implements EnterpriseRepository {
     @Override
     public synchronized KnowledgeBaseResponse saveKnowledgeBase(KnowledgeBaseRequest request) {
         long id = ids.incrementAndGet();
-        KnowledgeBaseResponse response = new KnowledgeBaseResponse(id, request.name(), nz(request.description()), blankToDefault(request.code(), "KB-" + id), 0, Instant.now());
+        KnowledgeBaseResponse response = new KnowledgeBaseResponse(
+            id,
+            request.name(),
+            nz(request.description()),
+            blankToDefault(request.code(), "KB-" + id),
+            blankToDefault(request.businessType(), "通用业务"),
+            0,
+            Instant.now()
+        );
         knowledgeBases.put(id, response);
         return response;
     }
@@ -40,7 +48,17 @@ public class InMemoryEnterpriseRepository implements EnterpriseRepository {
     @Override
     public synchronized List<KnowledgeBaseResponse> listKnowledgeBases() {
         return knowledgeBases.values().stream()
-            .map(kb -> new KnowledgeBaseResponse(kb.id(), kb.name(), kb.description(), kb.code(), documents.values().stream().filter(d -> d.knowledgeBaseId() == kb.id()).count(), kb.createdAt()))
+            .map(kb -> new KnowledgeBaseResponse(
+                kb.id(),
+                kb.name(),
+                kb.description(),
+                kb.code(),
+                kb.businessType(),
+                documents.values().stream()
+                    .filter(document -> document.knowledgeBaseId() == kb.id())
+                    .count(),
+                kb.createdAt()
+            ))
             .sorted(Comparator.comparing(KnowledgeBaseResponse::createdAt).reversed())
             .toList();
     }
@@ -155,11 +173,32 @@ public class InMemoryEnterpriseRepository implements EnterpriseRepository {
 
     @Override
     public synchronized void saveChatMessage(String conversationId, String role, String content) {
-        Map<String, String> row = new HashMap<>();
+        Map<String, Object> row = new HashMap<>();
         row.put("conversationId", conversationId);
         row.put("role", role);
         row.put("content", content);
+        row.put("createdAt", Instant.now());
         chatMessages.add(row);
+    }
+
+    @Override
+    public synchronized List<ConversationMessage> findChatMessages(
+        String conversationId,
+        int limit
+    ) {
+        int safeLimit = Math.min(20, Math.max(0, limit));
+        if (safeLimit == 0 || conversationId == null || conversationId.isBlank()) {
+            return List.of();
+        }
+        List<ConversationMessage> matching = chatMessages.stream()
+            .filter(row -> conversationId.equals(row.get("conversationId")))
+            .map(row -> new ConversationMessage(
+                String.valueOf(row.get("role")),
+                String.valueOf(row.get("content")),
+                (Instant) row.get("createdAt")
+            ))
+            .toList();
+        return matching.subList(Math.max(0, matching.size() - safeLimit), matching.size());
     }
 
     @Override public synchronized long countKnowledgeBases() { return knowledgeBases.size(); }

@@ -17,9 +17,14 @@ public class MockModelGateway implements ModelGateway {
     public MockModelGateway(ObjectMapper objectMapper) { this.objectMapper = objectMapper; }
 
     @Override public boolean enabled() { return false; }
+    @Override public String provider() { return "local-rag"; }
 
     @Override
-    public String answer(String question, List<RetrievedKnowledgeChunk> references) {
+    public String answer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
         if (references.isEmpty()) {
             return "No matching enterprise knowledge base evidence was found. Import documents or relax metadata filters. Question: " + question;
         }
@@ -33,8 +38,12 @@ public class MockModelGateway implements ModelGateway {
     }
 
     @Override
-    public Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
-        String answer = answer(question, references);
+    public Flux<String> streamAnswer(
+        String question,
+        List<RetrievedKnowledgeChunk> references,
+        String model
+    ) {
+        String answer = answer(question, references, model);
         java.util.List<String> chunks = new java.util.ArrayList<>();
         for (int i = 0; i < answer.length(); i += 48) chunks.add(answer.substring(i, Math.min(answer.length(), i + 48)));
         return Flux.fromIterable(chunks.isEmpty() ? List.of("") : chunks);
