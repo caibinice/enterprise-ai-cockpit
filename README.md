@@ -160,7 +160,8 @@ DeepSeek Flash/Pro SSE、MCP 工具、MySQL Flyway、pgvector 行数，以及浏
 ```
 
 测试数据脚本不会包含口令，需从忽略的本地配置注入当前进程，并按知识库
-代码和文档标题幂等写入：
+代码和文档标题幂等写入。文章源文件位于 `demo-data/knowledge/`；首次完整执行
+会得到 3 个业务知识库、17 篇文档和 29 个自动向量化分块：
 
 ```powershell
 $env:ACTION_PASSWORD = '<operation-password>'

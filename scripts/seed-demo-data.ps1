@@ -12,6 +12,7 @@ if ([string]::IsNullOrWhiteSpace($env:ACTION_PASSWORD)) {
 }
 
 $base = $BaseUrl.TrimEnd('/')
+$projectRoot = Split-Path -Parent $PSScriptRoot
 $verifyBody = @{ password = $env:ACTION_PASSWORD } | ConvertTo-Json
 $tokenResponse = Invoke-RestMethod `
   -Uri "$base/action-auth/verify" `
@@ -45,6 +46,26 @@ $seed = @(
 大面积支付故障、数据泄露疑虑或舆情风险为 P1，应在 10 分钟内通知值班负责人。任何等级都不得在知识证据不足时承诺赔付金额。
 '@
       }
+      @{
+        title = 'AI 客服知识库建设与证据回答规范'
+        path = 'demo-data/knowledge/customer-service/ai-customer-service-rag-guidelines.md'
+        metadata = @{ category = 'knowledge-governance'; business = 'customer-service'; version = '2026.07'; source = 'ai-blog/enterprise-ai-cockpit'; language = 'zh-CN' }
+      }
+      @{
+        title = '订单异常与物流延迟处置手册'
+        path = 'demo-data/knowledge/customer-service/order-exception-logistics-playbook.md'
+        metadata = @{ category = 'operations'; business = 'customer-service'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
+      @{
+        title = '投诉升级、舆情与隐私事件应急流程'
+        path = 'demo-data/knowledge/customer-service/complaint-privacy-escalation.md'
+        metadata = @{ category = 'risk'; business = 'customer-service'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
+      @{
+        title = '多语言跨境客服沟通与质检指南'
+        path = 'demo-data/knowledge/customer-service/multilingual-service-quality.md'
+        metadata = @{ category = 'quality'; business = 'customer-service'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
     )
   }
   @{
@@ -71,6 +92,26 @@ $seed = @(
 任何基于示例数据形成的建议都必须标注为演示用途，不得直接替代财务或合规审核。
 '@
       }
+      @{
+        title = '跨境趋势日报的数据口径与证据链'
+        path = 'demo-data/knowledge/cross-border/trend-daily-methodology.md'
+        metadata = @{ category = 'methodology'; business = 'cross-border'; version = '2026.07'; source = 'ai-blog/cross-border-trends'; language = 'zh-CN' }
+      }
+      @{
+        title = '日本、北美与欧洲站点选品节奏'
+        path = 'demo-data/knowledge/cross-border/market-selection-calendar.md'
+        metadata = @{ category = 'merchandising'; business = 'cross-border'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
+      @{
+        title = '库存、税务与跨境履约联动手册'
+        path = 'demo-data/knowledge/cross-border/inventory-tax-logistics.md'
+        metadata = @{ category = 'supply-chain'; business = 'cross-border'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
+      @{
+        title = '跨境经营指标诊断与实验复盘'
+        path = 'demo-data/knowledge/cross-border/metrics-experiment-review.md'
+        metadata = @{ category = 'analytics'; business = 'cross-border'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
     )
   }
   @{
@@ -88,16 +129,34 @@ $seed = @(
 若实时表现偏离样本外区间，应先停止新增仓位，再进行归因分析；不得通过临时放宽风险阈值掩盖异常。
 '@
       }
+      @{
+        title = '回测可信度与数据泄漏审计清单'
+        path = 'demo-data/knowledge/quant-research/backtest-audit-checklist.md'
+        metadata = @{ category = 'backtest'; business = 'quant-research'; version = '2026.07'; source = 'ai-blog/trust-the-backtest'; language = 'zh-CN' }
+      }
+      @{
+        title = 'LLM 舆情因子的 Walk-forward 验证方法'
+        path = 'demo-data/knowledge/quant-research/llm-sentiment-walk-forward.md'
+        metadata = @{ category = 'llm-factor'; business = 'quant-research'; version = '2026.07'; source = 'ai-blog/llm-sentiment-walk-forward'; language = 'zh-CN' }
+      }
+      @{
+        title = '量化研究数据版本与可复现性规范'
+        path = 'demo-data/knowledge/quant-research/research-data-versioning.md'
+        metadata = @{ category = 'reproducibility'; business = 'quant-research'; version = '2026.07'; source = 'ai-blog/ai-quant-system'; language = 'zh-CN' }
+      }
+      @{
+        title = '风险预算、异常止损与模型下线流程'
+        path = 'demo-data/knowledge/quant-research/risk-budget-shutdown.md'
+        metadata = @{ category = 'risk'; business = 'quant-research'; version = '2026.07'; source = 'curated-demo'; language = 'zh-CN' }
+      }
     )
   }
 )
 
-$knowledgeBases = @(
-  Invoke-RestMethod `
-    -Uri "$base/admin/knowledge-bases" `
-    -Headers $headers `
-    -SkipCertificateCheck
-)
+$knowledgeBases = Invoke-RestMethod `
+  -Uri "$base/admin/knowledge-bases" `
+  -Headers $headers `
+  -SkipCertificateCheck
 $createdKnowledgeBases = 0
 $createdDocuments = 0
 
@@ -122,19 +181,26 @@ foreach ($item in $seed) {
     $createdKnowledgeBases++
   }
 
-  $documents = @(
-    Invoke-RestMethod `
-      -Uri "$base/admin/documents?knowledgeBaseId=$($knowledgeBase.id)" `
-      -Headers $headers `
-      -SkipCertificateCheck
-  )
+  $documents = Invoke-RestMethod `
+    -Uri "$base/admin/documents?knowledgeBaseId=$($knowledgeBase.id)" `
+    -Headers $headers `
+    -SkipCertificateCheck
   foreach ($document in $item.documents) {
     if ($documents.title -contains $document.title) {
       continue
     }
+    $content = if ($document.ContainsKey('path')) {
+      $path = Join-Path $projectRoot $document.path
+      if (-not (Test-Path -LiteralPath $path)) {
+        throw "Seed document is missing: $path"
+      }
+      Get-Content -LiteralPath $path -Raw
+    } else {
+      $document.content
+    }
     $body = @{
       title = $document.title
-      content = $document.content.Trim()
+      content = $content.Trim()
       metadata = $document.metadata
     } | ConvertTo-Json -Depth 6
     Invoke-RestMethod `
