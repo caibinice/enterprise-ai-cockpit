@@ -9,7 +9,9 @@ import org.springframework.boot.test.context.SpringBootTest;
     "spring.datasource.username=sa",
     "spring.datasource.password=",
     "spring.flyway.enabled=false",
-    "spring.ai.vectorstore.pgvector.enabled=false"
+    "spring.ai.vectorstore.pgvector.enabled=false",
+    "spring.ai.mcp.client.enabled=false",
+    "app.mcp.enabled=true"
 })
 class ApplicationContextTest {
     @Test

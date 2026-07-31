@@ -9,7 +9,7 @@ User=__APP_USER__
 Group=__APP_USER__
 WorkingDirectory=/opt/enterprise-ai-cockpit/current
 EnvironmentFile=/opt/enterprise-ai-cockpit/shared/app.env
-ExecStart=/usr/local/bin/java17 -Xms64m -Xmx160m -Xss256k -XX:+UseSerialGC -XX:MaxMetaspaceSize=72m -XX:MaxDirectMemorySize=20m -XX:ReservedCodeCacheSize=32m -XX:+ExitOnOutOfMemoryError -jar /opt/enterprise-ai-cockpit/current/app.jar
+ExecStart=/usr/local/bin/java17 -Xms64m -Xmx160m -Xss256k -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -XX:MaxDirectMemorySize=20m -XX:ReservedCodeCacheSize=32m -XX:+ExitOnOutOfMemoryError -jar /opt/enterprise-ai-cockpit/current/app.jar
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

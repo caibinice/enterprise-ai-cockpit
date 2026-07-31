@@ -38,7 +38,7 @@ spring:
         enabled: ${MCP_ENABLED:false}
         name: enterprise-ai-cockpit
         version: 0.0.1
-        request-timeout: ${MCP_REQUEST_TIMEOUT:10s}
+        request-timeout: ${MCP_REQUEST_TIMEOUT:30s}
         initialized: false
         toolcallback:
           enabled: false

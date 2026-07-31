@@ -146,8 +146,11 @@ def environment(
         ),
         "MCP_ENABLED": "true",
         "MCP_NODE_COMMAND": "/usr/bin/node",
-        "MCP_WEATHER_SERVER": "mcp-servers/weather-mcp-server.js",
-        "MCP_REQUEST_TIMEOUT": "20s",
+        "MCP_WEATHER_SERVER": (
+            "/opt/enterprise-ai-cockpit/current/"
+            "mcp-servers/weather-mcp-server.js"
+        ),
+        "MCP_REQUEST_TIMEOUT": "30s",
         "ACTION_PASSWORD": action_auth["password"],
         "ACTION_TOKEN_SECRET": action_auth["tokenSecret"],
         "ACTION_TOKEN_TTL_MINUTES": "30",

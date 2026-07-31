@@ -2,23 +2,19 @@ package com.example.aiagent.service;
 
 import com.example.aiagent.model.McpExecutionResult;
 import com.example.aiagent.model.McpToolOption;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
-import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -53,16 +49,18 @@ public class McpToolService {
     private static final Map<String, McpToolOption> BY_ID = catalogById();
 
     private final List<McpSyncClient> clients;
-    private final ObjectMapper objectMapper;
-    private final AtomicBoolean initialized = new AtomicBoolean();
-    private volatile List<ToolCallback> callbacks = List.of();
+    private final Object initializationMonitor = new Object();
+    private volatile boolean initialized;
+    private volatile Map<String, McpSyncClient> clientsByTool = Map.of();
+    private volatile List<String> discoveredToolNames = List.of();
 
-    public McpToolService(
-        ObjectProvider<List<McpSyncClient>> clients,
-        ObjectMapper objectMapper
-    ) {
-        this.clients = clients.getIfAvailable(List::of);
-        this.objectMapper = objectMapper;
+    @Autowired
+    public McpToolService(ObjectProvider<List<McpSyncClient>> clients) {
+        this(clients.getIfAvailable(List::of));
+    }
+
+    McpToolService(List<McpSyncClient> clients) {
+        this.clients = clients == null ? List.of() : List.copyOf(clients);
     }
 
     public List<McpToolOption> options() {
@@ -102,20 +100,31 @@ public class McpToolService {
                 ));
                 continue;
             }
+            long startedAt = System.nanoTime();
             try {
+                String output = invoke(option.toolName(), arguments);
+                long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+                log.debug("MCP tool {} succeeded in {} ms", option.toolName(), elapsedMs);
                 results.add(new McpExecutionResult(
                     id,
                     option.name(),
                     "success",
-                    invoke(option.toolName(), arguments)
+                    output
                 ));
             } catch (RuntimeException ex) {
-                log.warn("MCP tool {} failed: {}", option.toolName(), ex.getMessage());
+                long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+                log.warn(
+                    "MCP tool {} failed after {} ms: {}",
+                    option.toolName(),
+                    elapsedMs,
+                    rootCauseMessage(ex),
+                    ex
+                );
                 results.add(new McpExecutionResult(
                     id,
                     option.name(),
                     "error",
-                    "工具调用失败，请稍后重试。"
+                    option.name() + "暂时不可用，已安全降级，请稍后重试。"
                 ));
             }
         }
@@ -131,23 +140,17 @@ public class McpToolService {
 
     public String status() {
         try {
-            return "enabled=true, clients=" + clients.size() + ", tools="
-                + callbacks().stream()
-                    .map(candidate -> candidate.getToolDefinition().name())
-                    .toList();
-        } catch (Exception ex) {
-            return "error: " + ex.getMessage();
+            toolClients();
+            return configuredStatus();
+        } catch (RuntimeException ex) {
+            return "error: " + rootCauseMessage(ex);
         }
     }
 
     public String configuredStatus() {
         return "enabled=true, clients=" + clients.size()
-            + ", initialized=" + initialized.get()
-            + (initialized.get()
-                ? ", tools=" + callbacks.stream()
-                    .map(candidate -> candidate.getToolDefinition().name())
-                    .toList()
-                : "");
+            + ", initialized=" + initialized
+            + (initialized ? ", tools=" + discoveredToolNames : "");
     }
 
     private Map<String, Object> inferredArguments(String id, String question) {
@@ -171,80 +174,100 @@ public class McpToolService {
     }
 
     private String invoke(String toolName, Map<String, Object> arguments) {
-        ToolCallback callback = callbacks().stream()
-            .filter(candidate -> {
-                String discovered = candidate.getToolDefinition().name();
-                return discovered.equalsIgnoreCase(toolName)
-                    || discovered.toLowerCase(Locale.ROOT).endsWith(
-                        "_" + toolName.toLowerCase(Locale.ROOT)
-                    );
-            })
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException(
-                "MCP 工具未发现：" + toolName
-            ));
+        McpSyncClient client = toolClients().get(toolName.toLowerCase(Locale.ROOT));
+        if (client == null) {
+            throw new IllegalStateException("MCP 工具未发现：" + toolName);
+        }
+        McpSchema.CallToolResult result;
         try {
-            String raw = callback.call(objectMapper.writeValueAsString(arguments));
-            return extractText(raw);
-        } catch (Exception ex) {
+            result = client.callTool(new McpSchema.CallToolRequest(toolName, arguments));
+        } catch (RuntimeException ex) {
+            invalidateDiscovery();
+            throw ex;
+        }
+        String output = extractText(result == null ? List.of() : result.content());
+        if (result == null) {
+            throw new IllegalStateException("MCP 工具未返回结果：" + toolName);
+        }
+        if (Boolean.TRUE.equals(result.isError())) {
             throw new IllegalStateException(
-                "MCP 工具调用失败：" + toolName,
-                ex
+                "MCP 工具执行错误：" + toolName
+                    + (output.isBlank() ? "" : "（" + output + "）")
             );
         }
+        if (output.isBlank()) {
+            throw new IllegalStateException("MCP 工具返回空结果：" + toolName);
+        }
+        return output;
     }
 
-    private String extractText(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return "";
+    private Map<String, McpSyncClient> toolClients() {
+        if (initialized) {
+            return clientsByTool;
         }
-        try {
-            JsonNode root = objectMapper.readTree(raw);
-            if (root.isTextual()) {
-                return root.asText();
+        synchronized (initializationMonitor) {
+            if (initialized) {
+                return clientsByTool;
             }
-            if (root.isArray() && !root.isEmpty()) {
-                JsonNode first = root.get(0);
-                return first.path("text").isTextual()
-                    ? first.path("text").asText()
-                    : first.toString();
-            }
-            JsonNode content = root.path("content");
-            if (content.isArray() && !content.isEmpty()) {
-                JsonNode first = content.get(0);
-                return first.path("text").isTextual()
-                    ? first.path("text").asText()
-                    : first.toString();
-            }
-        } catch (Exception ignored) {
-            return raw;
-        }
-        return raw;
-    }
-
-    private List<ToolCallback> callbacks() {
-        if (initialized.compareAndSet(false, true)) {
             try {
                 if (clients.isEmpty()) {
                     log.warn("MCP is enabled but no stdio client was auto-configured");
-                    callbacks = List.of();
-                } else {
-                    clients.forEach(McpSyncClient::initialize);
-                    callbacks = SyncMcpToolCallbackProvider.syncToolCallbacks(clients);
-                    log.info(
-                        "Discovered MCP tools: {}",
-                        callbacks.stream()
-                            .map(candidate -> candidate.getToolDefinition().name())
-                            .toList()
-                    );
+                    clientsByTool = Map.of();
+                    discoveredToolNames = List.of();
+                    initialized = true;
+                    return clientsByTool;
                 }
+                Map<String, McpSyncClient> discovered = new LinkedHashMap<>();
+                for (McpSyncClient client : clients) {
+                    if (!client.isInitialized()) {
+                        client.initialize();
+                    }
+                    McpSchema.ListToolsResult listed = client.listTools();
+                    if (listed == null || listed.tools() == null) {
+                        continue;
+                    }
+                    listed.tools().forEach(tool -> discovered.put(
+                        tool.name().toLowerCase(Locale.ROOT),
+                        client
+                    ));
+                }
+                if (discovered.isEmpty()) {
+                    throw new IllegalStateException("MCP 服务未暴露任何工具");
+                }
+                clientsByTool = Map.copyOf(discovered);
+                discoveredToolNames = List.copyOf(discovered.keySet());
+                initialized = true;
+                log.info("Discovered MCP tools: {}", discoveredToolNames);
+                return clientsByTool;
             } catch (RuntimeException ex) {
-                log.warn("MCP initialization failed", ex);
-                callbacks = List.of();
+                clientsByTool = Map.of();
+                discoveredToolNames = List.of();
+                initialized = false;
+                log.warn("MCP initialization failed and will be retried", ex);
                 throw ex;
             }
         }
-        return callbacks;
+    }
+
+    private String extractText(List<McpSchema.Content> content) {
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        return content.stream()
+            .map(item -> item instanceof McpSchema.TextContent text
+                ? text.text()
+                : String.valueOf(item))
+            .filter(text -> text != null && !text.isBlank())
+            .reduce((left, right) -> left + "\n" + right)
+            .orElse("");
+    }
+
+    private void invalidateDiscovery() {
+        synchronized (initializationMonitor) {
+            initialized = false;
+            clientsByTool = Map.of();
+            discoveredToolNames = List.of();
+        }
     }
 
     private String extractCity(String question) {
@@ -256,9 +279,18 @@ public class McpToolService {
                 return city;
             }
         }
+        String normalized = question;
+        for (String noise : List.of(
+            "帮我查一下", "帮我查询", "我想知道", "麻烦查询", "告诉我",
+            "请问", "帮我查", "查询一下", "查一下", "想知道", "查询", "看看",
+            "今天", "今日", "明天", "后天", "现在", "当前", "实时", "此刻",
+            "本地", "当地", "这里", "那边", "的"
+        )) {
+            normalized = normalized.replace(noise, "");
+        }
         Matcher matcher = Pattern.compile(
             "([\\p{IsHan}A-Za-z]{2,30})(?:市)?(?:的)?(?:天气|气温|温度)"
-        ).matcher(question);
+        ).matcher(normalized);
         return matcher.find() ? matcher.group(1) : "常州";
     }
 
@@ -285,6 +317,17 @@ public class McpToolService {
             }
         }
         return false;
+    }
+
+    private String rootCauseMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank()
+            ? current.getClass().getSimpleName()
+            : message;
     }
 
     private static Map<String, McpToolOption> catalogById() {

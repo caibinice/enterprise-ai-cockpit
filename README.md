@@ -116,7 +116,7 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 接口：
 
 - `POST /api/chat`：聚合响应。
-- `POST /api/chat/stream`：`meta`、`token`、`references`、`tool`、`chart`、`done` 事件。
+- `POST /api/chat/stream`：`meta`、`tool`（选中工具时）、`token`、`references`、`chart`、`done` 事件。工具状态会先于模型正文返回，便于界面及时展示调用结果。
 - `GET /api/chat/options`：可选模型与 MCP 工具目录。
 - `GET /api/health`：检查 Repository、pgvector 和 MCP 状态。
 
@@ -128,12 +128,18 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 ```powershell
 $env:MCP_ENABLED = 'true'
 $env:MCP_WEATHER_SERVER = 'mcp-servers/weather-mcp-server.js'
+$env:MCP_REQUEST_TIMEOUT = '30s'
 mvn spring-boot:run
 
 Invoke-RestMethod 'http://localhost:8080/api/mcp/status'
 Invoke-RestMethod 'http://localhost:8080/api/mcp/tools'
 Invoke-RestMethod 'http://localhost:8080/api/mcp/weather?city=常州'
 ```
+
+天气 MCP 对 Open-Meteo 的瞬时网络错误和 `408/425/429/5xx` 响应执行有限重试，
+保留 2 分钟新鲜缓存，并在上游短时不可用时最多使用 30 分钟内的最近成功结果。
+生产环境应为 STDIO server 配置绝对路径；工具失败时聊天链路会返回明确的
+`tool=error` 并安全降级，不会把实时天气失败误报成“知识库没有信息”。
 
 ## 测试与验证
 

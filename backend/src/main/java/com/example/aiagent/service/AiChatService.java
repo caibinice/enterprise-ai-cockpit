@@ -35,12 +35,30 @@ public class AiChatService {
         ObjectMapper objectMapper,
         ObjectProvider<McpToolService> mcpToolService
     ) {
+        this(
+            repository,
+            knowledgeBaseService,
+            modelGateway,
+            modelCatalog,
+            objectMapper,
+            mcpToolService.getIfAvailable()
+        );
+    }
+
+    AiChatService(
+        EnterpriseRepository repository,
+        KnowledgeBaseService knowledgeBaseService,
+        ModelGateway modelGateway,
+        ChatModelCatalog modelCatalog,
+        ObjectMapper objectMapper,
+        McpToolService mcpToolService
+    ) {
         this.repository = repository;
         this.knowledgeBaseService = knowledgeBaseService;
         this.modelGateway = modelGateway;
         this.modelCatalog = modelCatalog;
         this.objectMapper = objectMapper;
-        this.mcpToolService = mcpToolService.getIfAvailable();
+        this.mcpToolService = mcpToolService;
     }
 
     /** Compatibility helper for service-level tests. */
@@ -83,6 +101,8 @@ public class AiChatService {
             metadata.put("knowledgeBaseCount", request.knowledgeBaseIds() == null ? 0 : request.knowledgeBaseIds().size());
             metadata.put("mcpToolIds", request.mcpToolIds() == null ? List.of() : request.mcpToolIds());
             Flux<StreamEvent> meta = Flux.just(new StreamEvent("meta", json(metadata)));
+            Flux<StreamEvent> tools = Flux.fromIterable(context.toolResults())
+                .map(result -> new StreamEvent("tool", json(result)));
             Flux<StreamEvent> tokens = modelGateway.streamAnswer(
                     context.modelQuestion(),
                     context.references(),
@@ -97,8 +117,6 @@ public class AiChatService {
                 repository.saveChatMessage(context.conversationId(), "assistant", finalAnswer);
                 List<StreamEvent> events = new ArrayList<>();
                 events.add(new StreamEvent("references", json(context.references())));
-                context.toolResults().forEach(result ->
-                    events.add(new StreamEvent("tool", json(result))));
                 if (request.enableChart()) events.add(new StreamEvent("chart", modelGateway.chart(request.message(), context.references())));
                 events.add(new StreamEvent("done", json(Map.of(
                     "conversationId",
@@ -108,7 +126,7 @@ public class AiChatService {
                 ))));
                 return Flux.fromIterable(events);
             });
-            return Flux.concat(meta, tokens, tail);
+            return Flux.concat(meta, tools, tokens, tail);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
@@ -160,25 +178,29 @@ public class AiChatService {
         List<McpExecutionResult> toolResults
     ) {
         StringBuilder prompt = new StringBuilder();
+        if (toolResults != null && !toolResults.isEmpty()) {
+            prompt.append("""
+                本轮应用已执行的 MCP 工具结果（受信任的实时上下文）：
+                - status=success 的结果优先于知识库，用它回答天气、时间等实时问题；不要声称知识库缺少实时信息。
+                - status=error 表示工具暂时不可用，应明确说明服务不可用且不要编造实时数据。
+                - status=ready 表示本轮没有触发该工具，不要假装已经调用。
+                """);
+            toolResults.forEach(result -> prompt
+                .append("- ")
+                .append(result.name())
+                .append(" [status=")
+                .append(result.status())
+                .append("]：")
+                .append(result.output())
+                .append('\n'));
+            prompt.append('\n');
+        }
         if (history != null && !history.isEmpty()) {
             prompt.append("最近对话：\n");
             history.forEach(message -> prompt
                 .append("assistant".equals(message.role()) ? "助手" : "用户")
                 .append("：")
                 .append(message.content())
-                .append('\n'));
-            prompt.append('\n');
-        }
-        List<McpExecutionResult> successfulTools = toolResults.stream()
-            .filter(result -> "success".equals(result.status()))
-            .toList();
-        if (!successfulTools.isEmpty()) {
-            prompt.append("本轮 MCP 工具结果：\n");
-            successfulTools.forEach(result -> prompt
-                .append("- ")
-                .append(result.name())
-                .append("：")
-                .append(result.output())
                 .append('\n'));
             prompt.append('\n');
         }

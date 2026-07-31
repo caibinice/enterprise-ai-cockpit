@@ -117,10 +117,6 @@ public class SpringAiModelGateway implements ModelGateway {
     }
 
     private String systemPrompt() {
-        return """
-            你是企业智能座舱中的 RAG 助手。优先依据检索到的知识库证据回答，并在关键结论后标注引用编号。
-            不要编造证据中不存在的公司制度、数字或结论；证据不足时要明确说明。
-            工具结果属于实时上下文，可以使用但不要伪造工具调用。默认使用用户提问的语言，回答清晰、简洁、可执行。
-            """;
+        return ModelPromptPolicy.SYSTEM_PROMPT;
     }
 }
