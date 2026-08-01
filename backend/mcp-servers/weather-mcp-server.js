@@ -188,6 +188,34 @@ function normalizeCityList(cities) {
   return normalized;
 }
 
+function normalizeLocationList(locations) {
+  if (!Array.isArray(locations) || !locations.length) throw new Error('至少需要一个坐标城市');
+  if (locations.length > 20) throw new Error('单次最多查询 20 个城市');
+  const normalized = [];
+  const seen = new Set();
+  for (const item of locations) {
+    const name = normalizeCityName(item?.city || item?.name);
+    const latitude = Number(item?.latitude);
+    const longitude = Number(item?.longitude);
+    if (!name || name.length > 40) throw new Error('坐标城市名称无效');
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+      || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new Error(`城市坐标无效：${name}`);
+    }
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push({
+      name,
+      latitude,
+      longitude,
+      admin1: String(item?.admin1 || '').trim(),
+      country: String(item?.country || '').trim(),
+    });
+  }
+  return normalized;
+}
+
 function cacheKeyFor(city) {
   return normalizeCityName(city).toLowerCase();
 }
@@ -275,8 +303,20 @@ async function queryWeather(city) {
   }
 }
 
-async function queryWeatherBatch(cities, region) {
-  const requestedCities = normalizeCityList(cities);
+async function queryWeatherBatch(cities, region, coordinateLocations, displayNames) {
+  const suppliedLocations = coordinateLocations === undefined
+    ? []
+    : normalizeLocationList(coordinateLocations);
+  const requestedCities = cities === undefined
+    ? suppliedLocations.map((location) => location.name)
+    : normalizeCityList(cities);
+  const requestedDisplayNames = Array.isArray(displayNames)
+    && displayNames.length === requestedCities.length
+    ? displayNames.map(normalizeCityName)
+    : [];
+  const suppliedByCity = new Map(
+    suppliedLocations.map((location) => [cacheKeyFor(location.name), location]),
+  );
   const valuesByCity = new Map();
   const missing = [];
   for (const city of requestedCities) {
@@ -290,7 +330,9 @@ async function queryWeatherBatch(cities, region) {
 
   if (missing.length) {
     try {
-      const locations = await Promise.all(missing.map(resolveLocation));
+      const locations = await Promise.all(missing.map((city) => (
+        suppliedByCity.get(cacheKeyFor(city)) || resolveLocation(city)
+      )));
       const forecasts = await fetchForecasts(locations);
       missing.forEach((city, index) => {
         const value = weatherValue(locations[index], forecasts[index]);
@@ -317,7 +359,11 @@ async function queryWeatherBatch(cities, region) {
     }
   }
 
-  const values = requestedCities.map((city) => valuesByCity.get(city));
+  const values = requestedCities.map((city, index) => {
+    const value = valuesByCity.get(city);
+    const displayName = requestedDisplayNames[index];
+    return displayName ? { ...value, city: displayName } : value;
+  });
   const derivedRegion = String(region || '').trim()
     || [...new Set(values.map((value) => String(value.region || '').split(' · ')[0]).filter(Boolean))].join('、');
   return {
@@ -435,11 +481,36 @@ const tools = [
           maxItems: 20,
           uniqueItems: true,
         },
+        locations: {
+          type: 'array',
+          description: '可选的权威城市坐标，适合接收地图/行政区工具结果并避免再次地理编码',
+          items: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+              latitude: { type: 'number', minimum: -90, maximum: 90 },
+              longitude: { type: 'number', minimum: -180, maximum: 180 },
+              admin1: { type: 'string' },
+              country: { type: 'string' },
+            },
+            required: ['city', 'latitude', 'longitude'],
+          },
+          minItems: 1,
+          maxItems: 20,
+        },
+        displayNames: {
+          type: 'array',
+          description: '与 cities 顺序一致的界面展示名；跨语言查询时可用中文标签配合英文查询名',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 20,
+        },
         region: { type: 'string', description: '城市所属区域，用于结果与图表标题' },
       },
       anyOf: [
         { required: ['city'] },
         { required: ['cities'] },
+        { required: ['locations'] },
       ],
     },
   },
@@ -495,8 +566,13 @@ async function handle(message) {
     try {
       let value;
       if (params.name === 'queryWeather') {
-        value = params.arguments?.cities !== undefined
-          ? await queryWeatherBatch(params.arguments.cities, params.arguments?.region)
+        value = params.arguments?.cities !== undefined || params.arguments?.locations !== undefined
+          ? await queryWeatherBatch(
+            params.arguments?.cities,
+            params.arguments?.region,
+            params.arguments?.locations,
+            params.arguments?.displayNames,
+          )
           : await queryWeather(params.arguments?.city);
       } else if (params.name === 'getCurrentTime') {
         value = currentTime(params.arguments?.timezone);
@@ -564,6 +640,7 @@ module.exports = {
   currentTime,
   getJson,
   normalizeCityList,
+  normalizeLocationList,
   queryWeather,
   queryWeatherBatch,
   requestJson,

@@ -1,6 +1,8 @@
 package com.example.aiagent.service;
 
 import com.example.aiagent.model.McpExecutionResult;
+import com.example.aiagent.model.McpToolCall;
+import com.example.aiagent.model.McpToolDefinition;
 import com.example.aiagent.model.McpToolOption;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -55,6 +57,13 @@ public class McpToolService {
             "计算包含括号和四则运算的表达式，不执行任意代码。",
             "calculate",
             true
+        ),
+        new McpToolOption(
+            "amap",
+            "高德地图",
+            "通过高德开放平台解析行政区、地理编码、天气与地点搜索，适合跨城市位置任务。",
+            "maps_district",
+            true
         )
     );
     private static final Map<String, McpToolOption> BY_ID = catalogById();
@@ -63,6 +72,7 @@ public class McpToolService {
     private final Object initializationMonitor = new Object();
     private volatile boolean initialized;
     private volatile Map<String, McpSyncClient> clientsByTool = Map.of();
+    private volatile Map<String, McpToolDefinition> definitionsByTool = Map.of();
     private volatile List<String> discoveredToolNames = List.of();
 
     @Autowired
@@ -85,6 +95,89 @@ public class McpToolService {
                 configured
             ))
             .toList();
+    }
+
+    /** Returns only the concrete MCP tools that the user enabled for this chat. */
+    public List<McpToolDefinition> availableTools(List<String> selectedIds) {
+        if (selectedIds == null || selectedIds.isEmpty()) return List.of();
+        LinkedHashSet<String> selected = selectedIds.stream()
+            .filter(java.util.Objects::nonNull)
+            .map(value -> value.trim().toLowerCase(Locale.ROOT))
+            .filter(BY_ID::containsKey)
+            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (selected.isEmpty()) return List.of();
+        try {
+            toolClients();
+            return definitionsByTool.values().stream()
+                .filter(definition -> selected.contains(definition.ownerId()))
+                .toList();
+        } catch (RuntimeException ex) {
+            log.warn("Unable to describe MCP tools for model planning: {}", rootCauseMessage(ex));
+            return List.of();
+        }
+    }
+
+    /** Executes only model-planned calls whose owning MCP capability was selected by the user. */
+    public List<McpExecutionResult> executeCalls(
+        List<McpToolCall> calls,
+        List<String> selectedIds
+    ) {
+        if (calls == null || calls.isEmpty()) return List.of();
+        LinkedHashSet<String> selected = selectedIds == null
+            ? new LinkedHashSet<>()
+            : selectedIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(value -> value.trim().toLowerCase(Locale.ROOT))
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        toolClients();
+        List<McpExecutionResult> results = new ArrayList<>();
+        for (McpToolCall call : calls.stream().limit(6).toList()) {
+            String requestedName = call == null || call.name() == null
+                ? ""
+                : call.name().trim().toLowerCase(Locale.ROOT);
+            McpToolDefinition definition = definitionsByTool.get(requestedName);
+            if (definition == null || !selected.contains(definition.ownerId())) {
+                log.warn("Model requested unavailable or unauthorized MCP tool: {}", requestedName);
+                results.add(new McpExecutionResult(
+                    "agent",
+                    "智能体规划",
+                    "error",
+                    "模型请求了当前会话未授权的工具，已阻止执行。"
+                ));
+                continue;
+            }
+            McpToolOption option = BY_ID.get(definition.ownerId());
+            long startedAt = System.nanoTime();
+            try {
+                String output = invoke(definition.name(), call.arguments());
+                log.debug(
+                    "Model-planned MCP tool {} succeeded in {} ms",
+                    definition.name(),
+                    (System.nanoTime() - startedAt) / 1_000_000
+                );
+                results.add(new McpExecutionResult(
+                    option.id(),
+                    option.name(),
+                    "success",
+                    output
+                ));
+            } catch (RuntimeException ex) {
+                log.warn(
+                    "Model-planned MCP tool {} failed after {} ms: {}",
+                    definition.name(),
+                    (System.nanoTime() - startedAt) / 1_000_000,
+                    rootCauseMessage(ex),
+                    ex
+                );
+                results.add(new McpExecutionResult(
+                    option.id(),
+                    option.name(),
+                    "error",
+                    option.name() + "暂时不可用，已安全降级，请稍后重试。"
+                ));
+            }
+        }
+        return List.copyOf(results);
     }
 
     public List<McpExecutionResult> executeSelected(
@@ -262,6 +355,7 @@ public class McpToolService {
                     return clientsByTool;
                 }
                 Map<String, McpSyncClient> discovered = new LinkedHashMap<>();
+                Map<String, McpToolDefinition> definitions = new LinkedHashMap<>();
                 for (McpSyncClient client : clients) {
                     if (!client.isInitialized()) {
                         client.initialize();
@@ -270,21 +364,34 @@ public class McpToolService {
                     if (listed == null || listed.tools() == null) {
                         continue;
                     }
-                    listed.tools().forEach(tool -> discovered.put(
-                        tool.name().toLowerCase(Locale.ROOT),
-                        client
-                    ));
+                    listed.tools().forEach(tool -> {
+                        String normalizedName = tool.name().toLowerCase(Locale.ROOT);
+                        String ownerId = ownerForTool(normalizedName);
+                        if (ownerId == null) {
+                            log.info("Ignoring MCP tool without a cockpit capability mapping: {}", tool.name());
+                            return;
+                        }
+                        discovered.put(normalizedName, client);
+                        definitions.put(normalizedName, new McpToolDefinition(
+                            ownerId,
+                            tool.name(),
+                            tool.description() == null ? "" : tool.description(),
+                            schemaMap(tool.inputSchema())
+                        ));
+                    });
                 }
                 if (discovered.isEmpty()) {
                     throw new IllegalStateException("MCP 服务未暴露任何工具");
                 }
                 clientsByTool = Map.copyOf(discovered);
+                definitionsByTool = Map.copyOf(definitions);
                 discoveredToolNames = List.copyOf(discovered.keySet());
                 initialized = true;
                 log.info("Discovered MCP tools: {}", discoveredToolNames);
                 return clientsByTool;
             } catch (RuntimeException ex) {
                 clientsByTool = Map.of();
+                definitionsByTool = Map.of();
                 discoveredToolNames = List.of();
                 initialized = false;
                 log.warn("MCP initialization failed and will be retried", ex);
@@ -310,8 +417,35 @@ public class McpToolService {
         synchronized (initializationMonitor) {
             initialized = false;
             clientsByTool = Map.of();
+            definitionsByTool = Map.of();
             discoveredToolNames = List.of();
         }
+    }
+
+    private Map<String, Object> schemaMap(McpSchema.JsonSchema schema) {
+        if (schema == null) return Map.of("type", "object");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("type", schema.type() == null ? "object" : schema.type());
+        if (schema.properties() != null && !schema.properties().isEmpty()) {
+            result.put("properties", schema.properties());
+        }
+        if (schema.required() != null && !schema.required().isEmpty()) {
+            result.put("required", schema.required());
+        }
+        if (schema.additionalProperties() != null) {
+            result.put("additionalProperties", schema.additionalProperties());
+        }
+        return Map.copyOf(result);
+    }
+
+    private static String ownerForTool(String toolName) {
+        return switch (toolName.toLowerCase(Locale.ROOT)) {
+            case "queryweather" -> "weather";
+            case "getcurrenttime" -> "time";
+            case "calculate" -> "calculator";
+            case "maps_district", "maps_weather", "maps_geo", "maps_text_search" -> "amap";
+            default -> null;
+        };
     }
 
     private String extractCity(String question) {

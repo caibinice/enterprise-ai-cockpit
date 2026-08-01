@@ -27,6 +27,8 @@ public class AiChatService {
     private final ObjectMapper objectMapper;
     private final McpToolService mcpToolService;
     private final ToolResultChartService toolResultChartService;
+    private final AgentToolOrchestrator agentToolOrchestrator;
+    private final StructuredAgentResponseService structuredResponseService;
     @Value("${app.rag.top-k:6}")
     private int topK = 6;
 
@@ -64,6 +66,15 @@ public class AiChatService {
         this.objectMapper = objectMapper;
         this.mcpToolService = mcpToolService;
         this.toolResultChartService = new ToolResultChartService(objectMapper);
+        this.agentToolOrchestrator = new AgentToolOrchestrator(
+            mcpToolService,
+            modelGateway,
+            objectMapper
+        );
+        this.structuredResponseService = new StructuredAgentResponseService(
+            objectMapper,
+            modelGateway
+        );
     }
 
     /** Compatibility helper for service-level tests. */
@@ -84,6 +95,8 @@ public class AiChatService {
         this.objectMapper = objectMapper;
         this.mcpToolService = null;
         this.toolResultChartService = new ToolResultChartService(objectMapper);
+        this.agentToolOrchestrator = new AgentToolOrchestrator(null, modelGateway, objectMapper);
+        this.structuredResponseService = new StructuredAgentResponseService(objectMapper, modelGateway);
     }
 
     /**
@@ -99,33 +112,38 @@ public class AiChatService {
     public Flux<StreamEvent> streamReactive(ChatStreamRequest request) {
         return Flux.defer(() -> {
             ChatContext context = prepare(request);
-            StringBuilder answer = new StringBuilder();
+            boolean chartRequested = toolResultChartService.shouldGenerate(
+                request.message(),
+                request.enableChart()
+            );
+            StructuredAgentResponseService.Result generated = structuredResponseService.compose(
+                context.modelQuestion(),
+                context.references(),
+                context.toolResults(),
+                context.model(),
+                chartRequested
+            );
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("conversationId", context.conversationId());
             metadata.put("llmEnabled", modelGateway.enabled());
             metadata.put("model", context.model());
             metadata.put("knowledgeBaseCount", request.knowledgeBaseIds() == null ? 0 : request.knowledgeBaseIds().size());
             metadata.put("mcpToolIds", request.mcpToolIds() == null ? List.of() : request.mcpToolIds());
+            metadata.put("agenticToolPlanning", true);
             Flux<StreamEvent> meta = Flux.just(new StreamEvent("meta", json(metadata)));
+            Flux<StreamEvent> plan = context.planSummary().isBlank()
+                ? Flux.empty()
+                : Flux.just(new StreamEvent("plan", json(Map.of("summary", context.planSummary()))));
             Flux<StreamEvent> tools = Flux.fromIterable(context.toolResults())
                 .map(result -> new StreamEvent("tool", json(result)));
-            Flux<StreamEvent> tokens = modelGateway.streamAnswer(
-                    context.modelQuestion(),
-                    context.references(),
-                    context.model()
-                )
-                .filter(token -> token != null && !token.isEmpty())
-                .switchIfEmpty(Flux.defer(() -> Flux.just(retryOrFallbackAnswer(context))))
-                .doOnNext(answer::append)
+            Flux<StreamEvent> tokens = Flux.fromIterable(chunk(generated.answer(), 72))
                 .map(token -> new StreamEvent("token", token));
             Flux<StreamEvent> tail = Flux.defer(() -> {
-                String finalAnswer = answer.toString();
                 repository.saveChatMessage(context.conversationId(), "user", request.message());
-                repository.saveChatMessage(context.conversationId(), "assistant", finalAnswer);
+                repository.saveChatMessage(context.conversationId(), "assistant", generated.answer());
                 List<StreamEvent> events = new ArrayList<>();
                 events.add(new StreamEvent("references", json(context.references())));
-                String chart = chart(request, context);
-                if (chart != null) events.add(new StreamEvent("chart", chart));
+                generated.chartSpecs().forEach(chart -> events.add(new StreamEvent("chart", chart)));
                 events.add(new StreamEvent("done", json(Map.of(
                     "conversationId",
                     context.conversationId(),
@@ -134,21 +152,29 @@ public class AiChatService {
                 ))));
                 return Flux.fromIterable(events);
             });
-            return Flux.concat(meta, tools, tokens, tail);
+            return Flux.concat(meta, plan, tools, tokens, tail);
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
     public ChatResponse chat(ChatStreamRequest request) {
         ChatContext context = prepare(request);
-        String answer = modelGateway.answer(
+        StructuredAgentResponseService.Result generated = structuredResponseService.compose(
             context.modelQuestion(),
             context.references(),
-            context.model()
+            context.toolResults(),
+            context.model(),
+            toolResultChartService.shouldGenerate(request.message(), request.enableChart())
         );
         repository.saveChatMessage(context.conversationId(), "user", request.message());
-        repository.saveChatMessage(context.conversationId(), "assistant", answer);
-        String chart = chart(request, context);
-        return new ChatResponse(context.conversationId(), answer, modelGateway.enabled(), context.references(), chart);
+        repository.saveChatMessage(context.conversationId(), "assistant", generated.answer());
+        String firstChart = generated.chartSpecs().isEmpty() ? null : generated.chartSpecs().get(0);
+        return new ChatResponse(
+            context.conversationId(),
+            generated.answer(),
+            modelGateway.enabled(),
+            context.references(),
+            firstChart
+        );
     }
 
     private ChatContext prepare(ChatStreamRequest request) {
@@ -161,10 +187,10 @@ public class AiChatService {
         if (request.enableTools() && selectedToolIds.isEmpty()) {
             selectedToolIds = List.of("weather");
         }
-        List<McpExecutionResult> toolResults =
-            request.enableTools() && mcpToolService != null
-                ? mcpToolService.executeSelected(request.message(), selectedToolIds)
-                : List.of();
+        AgentToolOrchestrator.Result orchestration = request.enableTools() && mcpToolService != null
+            ? agentToolOrchestrator.execute(request.message(), selectedToolIds, model)
+            : new AgentToolOrchestrator.Result("", List.of());
+        List<McpExecutionResult> toolResults = orchestration.toolResults();
         List<RetrievedKnowledgeChunk> references = isStandaloneWeatherQuestion(
             request.message(),
             toolResults
@@ -180,22 +206,32 @@ public class AiChatService {
             conversationId,
             8
         );
-        String modelQuestion = buildQuestion(history, request.message(), toolResults);
+        String modelQuestion = buildQuestion(
+            history,
+            request.message(),
+            orchestration.summary(),
+            toolResults
+        );
         return new ChatContext(
             conversationId,
             model,
             references,
             modelQuestion,
-            toolResults
+            toolResults,
+            orchestration.summary()
         );
     }
 
     private String buildQuestion(
         List<ConversationMessage> history,
         String question,
+        String planSummary,
         List<McpExecutionResult> toolResults
     ) {
         StringBuilder prompt = new StringBuilder();
+        if (planSummary != null && !planSummary.isBlank()) {
+            prompt.append("智能体工具规划摘要：").append(planSummary).append("\n\n");
+        }
         if (toolResults != null && !toolResults.isEmpty()) {
             prompt.append("""
                 本轮应用已执行的 MCP 工具结果（受信任的实时上下文）：
@@ -228,45 +264,13 @@ public class AiChatService {
         return prompt.toString();
     }
 
-    private String chart(ChatStreamRequest request, ChatContext context) {
-        if (!toolResultChartService.shouldGenerate(request.message(), request.enableChart())) {
-            return null;
+    private List<String> chunk(String answer, int size) {
+        if (answer == null || answer.isEmpty()) return List.of("");
+        List<String> chunks = new ArrayList<>();
+        for (int start = 0; start < answer.length(); start += size) {
+            chunks.add(answer.substring(start, Math.min(answer.length(), start + size)));
         }
-        if (toolResultChartService.hasWeatherResult(context.toolResults())) {
-            return toolResultChartService.weatherChart(context.toolResults());
-        }
-        return modelGateway.chart(request.message(), context.references());
-    }
-
-    private String retryOrFallbackAnswer(ChatContext context) {
-        log.warn(
-            "Model {} completed its stream without content; retrying once without streaming",
-            context.model()
-        );
-        String retried = modelGateway.answer(
-            context.modelQuestion(),
-            context.references(),
-            context.model()
-        );
-        if (isUsableModelAnswer(retried)) return retried;
-        String toolFallback = toolResultChartService.weatherAnswer(context.toolResults());
-        if (toolFallback != null) {
-            log.warn("Using deterministic weather answer after empty model stream and retry");
-            return toolFallback;
-        }
-        return retried == null || retried.isBlank()
-            ? "模型本轮未返回可展示内容，请重试或切换模型。"
-            : retried;
-    }
-
-    private boolean isUsableModelAnswer(String answer) {
-        if (answer == null || answer.isBlank()) return false;
-        return !containsAny(
-            answer,
-            "No matching enterprise knowledge base evidence",
-            "模型服务暂时不可用，已切换为本地 RAG",
-            "Local RAG summary"
-        );
+        return chunks;
     }
 
     private boolean isStandaloneWeatherQuestion(
@@ -301,6 +305,7 @@ public class AiChatService {
         String model,
         List<RetrievedKnowledgeChunk> references,
         String modelQuestion,
-        List<McpExecutionResult> toolResults
+        List<McpExecutionResult> toolResults,
+        String planSummary
     ) {}
 }

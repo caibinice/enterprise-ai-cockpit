@@ -71,9 +71,13 @@
         </div>
       </header>
 
-      <main class="page-frame">
+      <main :class="['page-frame', { 'chat-frame': active === 'cockpit' }]">
         <Transition name="page" mode="out-in">
-          <section v-if="active === 'cockpit'" key="cockpit" class="chat-layout">
+          <section
+            v-if="active === 'cockpit'"
+            key="cockpit"
+            :class="['chat-layout', { 'has-visuals': charts.length }]"
+          >
             <article class="glass-panel conversation-panel">
               <div class="panel-title-row">
                 <div>
@@ -134,7 +138,7 @@
                   </el-select>
                 </div>
 
-                <el-popover placement="bottom-end" :width="360" trigger="click">
+                <el-popover placement="bottom-end" :width="430" trigger="click">
                   <template #reference>
                     <button
                       :class="['tool-selector', { selected: chat.mcpToolIds.length }]"
@@ -227,10 +231,18 @@
                 </div>
               </div>
 
+              <div v-if="agentPlanSummary" class="agent-plan-banner">
+                <span><el-icon><MagicStick /></el-icon></span>
+                <div>
+                  <strong>智能体规划</strong>
+                  <small>{{ agentPlanSummary }}</small>
+                </div>
+              </div>
+
               <div v-if="toolTraces.length" class="tool-trace-strip">
                 <div
-                  v-for="trace in toolTraces"
-                  :key="`${trace.id}-${trace.status}`"
+                  v-for="(trace, traceIndex) in toolTraces"
+                  :key="`${trace.id}-${trace.status}-${traceIndex}`"
                   :class="['tool-trace', trace.status]"
                 >
                   <span>{{ toolGlyph(trace.id) }}</span>
@@ -246,7 +258,7 @@
                   v-model="chat.message"
                   type="textarea"
                   resize="none"
-                  :autosize="{ minRows: 2, maxRows: 7 }"
+                  :autosize="{ minRows: 2, maxRows: 5 }"
                   maxlength="12000"
                   placeholder="向企业知识库提问…"
                   @keydown="handleComposerKeydown"
@@ -255,7 +267,7 @@
                   <div>
                     <el-switch v-model="chat.enableChart" size="small" />
                     <span>强制生成图表</span>
-                    <span class="shortcut">⌘ / Ctrl + Enter</span>
+                    <span class="shortcut">Enter 发送 · Ctrl + Enter 换行</span>
                   </div>
                   <button
                     v-if="loading.chat"
@@ -310,15 +322,42 @@
                 </div>
               </article>
 
-              <article class="glass-panel evidence-card">
-                <div class="panel-title-row compact">
+              <article class="glass-panel insight-card">
+                <div class="insight-heading">
                   <div>
-                    <span class="section-kicker">GROUNDING</span>
-                    <h3>引用证据</h3>
+                    <span class="section-kicker">CONTEXT & VISUALS</span>
+                    <h3>{{ analysisTab === 'charts' ? '动态分析' : '引用证据' }}</h3>
                   </div>
-                  <span class="count-badge">{{ references.length }}</span>
+                  <div class="insight-tabs" role="tablist" aria-label="上下文面板">
+                    <button
+                      type="button"
+                      :class="{ active: analysisTab === 'charts' }"
+                      :disabled="!charts.length"
+                      @click="analysisTab = 'charts'"
+                    >
+                      图表 <span>{{ charts.length }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      :class="{ active: analysisTab === 'evidence' }"
+                      @click="analysisTab = 'evidence'"
+                    >
+                      引用 <span>{{ references.length }}</span>
+                    </button>
+                  </div>
                 </div>
-                <div v-if="references.length" class="reference-list">
+
+                <div v-if="analysisTab === 'charts' && charts.length" class="chart-stack">
+                  <section v-for="(chart, index) in charts" :key="chart.id" class="chart-item">
+                    <div class="chart-item-heading">
+                      <span>VISUAL {{ String(index + 1).padStart(2, '0') }}</span>
+                      <strong>{{ chartTitle(chart.option) }}</strong>
+                    </div>
+                    <ChartView :option="chart.option" />
+                  </section>
+                </div>
+
+                <div v-else-if="analysisTab === 'evidence' && references.length" class="reference-list">
                   <button
                     v-for="(reference, index) in references"
                     :key="reference.id"
@@ -333,18 +372,11 @@
                     <em>{{ formatScore(reference.score) }}</em>
                   </button>
                 </div>
+
                 <div v-else class="small-empty">
                   <el-icon><Document /></el-icon>
-                  <p>回答后会在这里展示命中的知识片段。</p>
+                  <p>{{ analysisTab === 'charts' ? '提出可视化需求后，结构化图表会显示在这里。' : '回答后会在这里展示命中的知识片段。' }}</p>
                 </div>
-              </article>
-
-              <article v-show="chartVisible" class="glass-panel chart-card">
-                <div class="panel-title-row compact">
-                  <h3>动态分析图</h3>
-                  <button class="text-button" type="button" @click="chartVisible = false">关闭</button>
-                </div>
-                <div ref="chartRef" class="chart"></div>
               </article>
             </aside>
           </section>
@@ -710,11 +742,9 @@ import {
   TransformComponent,
 } from 'echarts/components';
 import {
-  getInstanceByDom,
-  init as initChart,
   use as useEcharts,
 } from 'echarts/core';
-import type { ECharts, EChartsCoreOption } from 'echarts/core';
+import type { EChartsCoreOption } from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import {
   ArrowRight,
@@ -737,6 +767,7 @@ import {
   UploadFilled,
 } from '@element-plus/icons-vue';
 import ActionAuthDialog from './components/ActionAuthDialog.vue';
+import ChartView from './components/ChartView.vue';
 import { setActionTokenRequester } from './actionAuth';
 import { api, streamChat } from './api';
 
@@ -822,6 +853,10 @@ type McpTrace = {
   status: 'success' | 'ready' | 'error';
   output: string;
 };
+type ChartItem = {
+  id: number;
+  option: EChartsCoreOption;
+};
 type DataSource = {
   id: number;
   name: string;
@@ -888,12 +923,13 @@ const importOpen = ref(false);
 const importMode = ref<'text' | 'file'>('text');
 const activeReference = ref<Reference>();
 const previewDocument = ref<DocumentRow>();
-const chartVisible = ref(false);
+const charts = ref<ChartItem[]>([]);
+const analysisTab = ref<'charts' | 'evidence'>('evidence');
+const agentPlanSummary = ref('');
 const weatherCity = ref('常州');
 const weatherResult = ref('');
 const authDialog = ref<AuthDialogExpose>();
 const messageScroller = ref<HTMLDivElement>();
-const chartRef = ref<HTMLDivElement>();
 const loading = reactive({
   refresh: false,
   chat: false,
@@ -902,7 +938,7 @@ const loading = reactive({
   weather: false,
 });
 let messageId = 0;
-let chartInstance: ECharts | undefined;
+let chartId = 0;
 let chatAbortController: AbortController | undefined;
 
 const storedTools = readStoredArray('cockpit-mcp-tools');
@@ -1043,7 +1079,9 @@ async function sendChat() {
   loading.chat = true;
   references.value = [];
   toolTraces.value = [];
-  chartVisible.value = false;
+  charts.value = [];
+  analysisTab.value = 'evidence';
+  agentPlanSummary.value = '';
   messages.value.push({ id: ++messageId, role: 'user', content: question });
   const assistant: Message = {
     id: ++messageId,
@@ -1071,6 +1109,8 @@ async function sendChat() {
         const metadata = parseJson<{ conversationId?: string; model?: string }>(message.data, {});
         if (metadata.conversationId) chat.conversationId = metadata.conversationId;
         if (metadata.model) assistant.model = metadata.model;
+      } else if (message.event === 'plan') {
+        agentPlanSummary.value = parseJson<{ summary?: string }>(message.data, {}).summary || '';
       } else if (message.event === 'token') {
         assistant.content += message.data;
       } else if (message.event === 'references') {
@@ -1083,7 +1123,7 @@ async function sendChat() {
           output: message.data,
         }));
       } else if (message.event === 'chart') {
-        renderChart(parseJson(message.data, null));
+        addChart(parseJson(message.data, null));
       } else if (message.event === 'error') {
         throw new Error(message.data);
       }
@@ -1115,15 +1155,26 @@ function clearConversation() {
   messages.value = [];
   references.value = [];
   toolTraces.value = [];
+  agentPlanSummary.value = '';
   chat.conversationId = '';
-  chartVisible.value = false;
+  charts.value = [];
+  analysisTab.value = 'evidence';
 }
 
 function handleComposerKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+  if (event.key !== 'Enter' || event.isComposing) return;
+  if (event.ctrlKey || event.metaKey) {
     event.preventDefault();
-    void sendChat();
+    const textarea = event.target as HTMLTextAreaElement;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    chat.message = `${textarea.value.slice(0, start)}\n${textarea.value.slice(end)}`;
+    void nextTick(() => textarea.setSelectionRange(start + 1, start + 1));
+    return;
   }
+  if (event.shiftKey) return;
+  event.preventDefault();
+  void sendChat();
 }
 
 function useSuggestion(suggestion: string) {
@@ -1138,15 +1189,16 @@ async function scrollConversation() {
   }
 }
 
-function renderChart(spec: unknown) {
+function addChart(spec: unknown) {
   if (!spec || typeof spec !== 'object') return;
-  chartVisible.value = true;
-  void nextTick(() => {
-    if (!chartRef.value) return;
-    chartInstance ??= getInstanceByDom(chartRef.value) ?? initChart(chartRef.value);
-    chartInstance.setOption(spec as EChartsCoreOption, true);
-    chartInstance.resize();
-  });
+  charts.value.push({ id: ++chartId, option: spec as EChartsCoreOption });
+  analysisTab.value = 'charts';
+}
+
+function chartTitle(option: EChartsCoreOption) {
+  const title = option.title as { text?: string } | Array<{ text?: string }> | undefined;
+  if (Array.isArray(title)) return String(title[0]?.text || '动态分析图');
+  return String(title?.text || '动态分析图');
 }
 
 async function createKnowledgeBase() {
@@ -1312,7 +1364,7 @@ async function createReportTemplate() {
 async function runReport(id: number) {
   try {
     const run = await api<ReportRun>(`/admin/report-templates/${id}/run-now`, { method: 'POST' });
-    renderChart(parseJson(run.chartSpec, null));
+    addChart(parseJson(run.chartSpec, null));
     active.value = 'cockpit';
     await refreshAll();
     ElMessage.success('报告已生成，并写入关联知识库');
@@ -1392,7 +1444,7 @@ function formatDate(value: string) {
 }
 
 function toolGlyph(id: string) {
-  return ({ weather: '☀', time: '◷', calculator: '∑' } as Record<string, string>)[id] || '⌘';
+  return ({ weather: '☀', time: '◷', calculator: '∑', amap: '⌖', agent: '✦' } as Record<string, string>)[id] || '⌘';
 }
 
 function toolTraceSummary(trace: McpTrace) {
@@ -1487,6 +1539,8 @@ function renderMessage(value: string) {
       );
     } else if (!line.trim()) {
       output.push('<div class="message-spacer"></div>');
+    } else if (/^#{1,3}\s+/.test(line)) {
+      output.push(`<div class="message-heading">${renderInline(line.replace(/^#{1,3}\s+/, ''))}</div>`);
     } else if (/^\s*[-*]\s+/.test(line)) {
       output.push(`<div class="message-list-item">${renderInline(line.replace(/^\s*[-*]\s+/, ''))}</div>`);
     } else {
@@ -1496,24 +1550,16 @@ function renderMessage(value: string) {
   return output.join('');
 }
 
-function resizeChart() {
-  chartInstance?.resize();
-}
-
 onMounted(() => {
   setActionTokenRequester(() => {
     if (!authDialog.value) return Promise.reject(new Error('操作验证界面尚未就绪'));
     return authDialog.value.requestAuthorization();
   });
-  window.addEventListener('resize', resizeChart);
   void refreshAll();
 });
 
 onBeforeUnmount(() => {
   setActionTokenRequester(null);
-  window.removeEventListener('resize', resizeChart);
   chatAbortController?.abort();
-  chartInstance?.dispose();
-  chartInstance = undefined;
 });
 </script>

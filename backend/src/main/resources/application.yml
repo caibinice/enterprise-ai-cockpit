@@ -48,6 +48,12 @@ spring:
               command: ${MCP_NODE_COMMAND:node}
               args:
                 - ${MCP_WEATHER_SERVER:mcp-servers/weather-mcp-server.js}
+            amap:
+              command: ${MCP_NODE_COMMAND:node}
+              args:
+                - ${MCP_AMAP_SERVER:mcp-servers/amap-mcp-server.js}
+              env:
+                AMAP_MAPS_API_KEY: ${AMAP_MAPS_API_KEY:}
 
 server:
   address: ${SERVER_ADDRESS:127.0.0.1}

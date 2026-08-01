@@ -16,8 +16,13 @@ final class ToolResultChartService {
     }
 
     boolean shouldGenerate(String question, boolean explicitlyEnabled) {
-        if (explicitlyEnabled) return true;
         String text = question == null ? "" : question.toLowerCase();
+        if (containsAny(
+            text,
+            "不需要图表", "无需图表", "不要图表", "不展示图表", "不用画图",
+            "no chart", "without chart", "do not chart"
+        )) return false;
+        if (explicitlyEnabled) return true;
         return containsAny(
             text,
             "图表", "柱状图", "折线图", "饼图", "对比图", "趋势图", "可视化",

@@ -105,6 +105,7 @@ def environment(
     mysql = credentials["mysql.remote"]
     vector = credentials["postgresql.vector"]
     llm = credentials["deepseek.api"]
+    amap = credentials["amap.api"]
     values = {
         "SERVER_ADDRESS": "127.0.0.1",
         "SERVER_PORT": "8080",
@@ -150,7 +151,12 @@ def environment(
             "/opt/enterprise-ai-cockpit/current/"
             "mcp-servers/weather-mcp-server.js"
         ),
+        "MCP_AMAP_SERVER": (
+            "/opt/enterprise-ai-cockpit/current/"
+            "mcp-servers/amap-mcp-server.js"
+        ),
         "MCP_REQUEST_TIMEOUT": "30s",
+        "AMAP_MAPS_API_KEY": amap["api-key"],
         "ACTION_PASSWORD": action_auth["password"],
         "ACTION_TOKEN_SECRET": action_auth["tokenSecret"],
         "ACTION_TOKEN_TTL_MINUTES": "30",
@@ -199,6 +205,9 @@ previous="$(readlink -f "$root/current" 2>/dev/null || true)"
 before_nginx="$(systemctl is-active nginx || true)"
 before_quant="$(systemctl is-active ai-quant-api || true)"
 before_cross="$(systemctl is-active crossborder-trend || true)"
+before_nginx_pid="$(systemctl show nginx -p MainPID --value || true)"
+before_quant_pid="$(systemctl show ai-quant-api -p MainPID --value || true)"
+before_cross_pid="$(systemctl show crossborder-trend -p MainPID --value || true)"
 
 if ! command -v node >/dev/null 2>&1; then
   dnf -y --disablerepo='epel*' install nodejs >/dev/null
@@ -249,9 +258,15 @@ systemctl is-active --quiet enterprise-ai-cockpit.service
 after_nginx="$(systemctl is-active nginx || true)"
 after_quant="$(systemctl is-active ai-quant-api || true)"
 after_cross="$(systemctl is-active crossborder-trend || true)"
+after_nginx_pid="$(systemctl show nginx -p MainPID --value || true)"
+after_quant_pid="$(systemctl show ai-quant-api -p MainPID --value || true)"
+after_cross_pid="$(systemctl show crossborder-trend -p MainPID --value || true)"
 test "$before_nginx" = "$after_nginx"
 test "$before_quant" = "$after_quant"
 test "$before_cross" = "$after_cross"
+test "$before_nginx_pid" = "$after_nginx_pid"
+test "$before_quant_pid" = "$after_quant_pid"
+test "$before_cross_pid" = "$after_cross_pid"
 
 find "$root/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' \
   | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
@@ -261,6 +276,8 @@ rm -f "$archive" /tmp/cockpit-app.env \
 printf 'COCKPIT_SERVICE=%s\\n' "$(systemctl is-active enterprise-ai-cockpit.service)"
 printf 'UNCHANGED_SERVICES=nginx:%s,quant:%s,crossborder:%s\\n' \
   "$after_nginx" "$after_quant" "$after_cross"
+printf 'UNCHANGED_PIDS=nginx:%s,quant:%s,crossborder:%s\\n' \
+  "$after_nginx_pid" "$after_quant_pid" "$after_cross_pid"
 """
         remote.upload_bytes(
             wrapper.encode("utf-8"),

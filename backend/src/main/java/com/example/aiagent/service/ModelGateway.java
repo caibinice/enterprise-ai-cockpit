@@ -23,5 +23,19 @@ public interface ModelGateway {
     default Flux<String> streamAnswer(String question, List<RetrievedKnowledgeChunk> references) {
         return streamAnswer(question, references, null);
     }
+    /**
+     * Requests a JSON object for agent planning or final response rendering.
+     * Providers that support JSON mode should override this method. The default
+     * keeps local/test gateways source-compatible and relies on the caller's
+     * strict parser and fallback policy.
+     */
+    default String jsonAnswer(
+        String systemPrompt,
+        String userPrompt,
+        String model,
+        int maxTokens
+    ) {
+        return answer(systemPrompt + "\n\n" + userPrompt, List.of(), model);
+    }
     String chart(String question, List<RetrievedKnowledgeChunk> references);
 }

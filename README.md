@@ -16,10 +16,11 @@ STDIO 工具，以及按业务组织的知识库工作台。
 - `APP_REPOSITORY_MODE=mysql` 使用 `JdbcEnterpriseRepository`；`memory` 仍保留给无数据库演示和单元测试。
 - 文档导入后使用固定 1536 维 embedding 写入 PostgreSQL `enterprise_ai_vectors`，聊天优先走 pgvector cosine 检索，向量库不可用时回退 MySQL 关键词/CJK 检索。
 - 每次聊天可在 `deepseek-v4-flash` 与 `deepseek-v4-pro` 之间选择；服务端只接受白名单模型 ID，并按请求动态路由。`token` 事件来自上游 `/chat/completions` 的真实流。
-- 聊天会带入最近 8 条会话消息，优先使用所选知识库证据，并返回引用、模型与 MCP 调用轨迹。
-- MCP Client 通过 `backend/mcp-servers/weather-mcp-server.js` 连接 STDIO 服务，提供 Open-Meteo 实时天气、时区时间与不使用 `eval` 的安全计算器。
+- 聊天会带入最近 8 条会话消息；模型先输出结构化意图、地理范围与工具计划，Java 宿主完成授权、schema 校验、依赖编排和有限步执行，并返回规划、引用与 MCP 调用轨迹。
+- MCP Client 连接天气/通用工具和高德地图两个 STDIO 服务。高德负责行政区、地理编码和地点搜索，Open-Meteo 接收其权威城市坐标并执行最多 20 城的批量实时天气查询。
+- 最终回答使用受控 JSON 协议：正文与图表指令分离，仅允许柱状图、折线图和饼图；天气图表数值由宿主从 MCP 结果绑定，模型不能返回或执行 HTML、Canvas、Chart.js 代码。
 - 知识库按业务类型隔离，支持文本和文件导入、元数据、自动分块、MySQL 元数据与 pgvector 生命周期同步；创建、导入和删除等关键操作由 Java 后端短期令牌保护。
-- 前端提供 Apple 风格响应式座舱、独立知识库工作台、模型/MCP 选择、流式停止、引用查看、图表、数据源与报告页面。
+- 前端提供 Apple 风格响应式座舱、固定高度且自动滚底的对话区、Enter 发送/Ctrl+Enter 换行、独立知识库工作台、模型/MCP 选择、流式停止、引用查看、多图表、数据源与报告页面。
 
 ## 链路结构
 
@@ -29,17 +30,18 @@ flowchart LR
   API --> MYSQL[(MySQL / MariaDB\nJDBC Repository)]
   API --> EMB[Local or OpenAI-compatible\nEmbeddingService]
   EMB --> PG[(PostgreSQL + pgvector)]
-  API --> AI[Dynamic OpenAI-compatible Gateway]
+  API --> AGENT[Bounded model-planned Agent Loop]
+  AGENT --> AI[Dynamic OpenAI-compatible Gateway]
   AI --> DS[DeepSeek OpenAI-compatible SSE]
-  API --> MCP[Spring AI MCP Client]
-  MCP --> TOOLS[Weather / Time / Calculator\nSTDIO]
+  AGENT --> MCP[Spring AI MCP Client]
+  MCP --> TOOLS[Weather / Time / Calculator / Amap\nSTDIO]
 ```
 
 ## 目录
 
 ```text
 backend/                         Spring Boot API、RAG、JDBC、WebFlux、MCP
-backend/mcp-servers/             天气 MCP STDIO 示例
+backend/mcp-servers/             天气/通用与高德地图 MCP STDIO 服务
 backend/src/main/resources/     application.yml 与 Flyway 迁移
 database/mysql/                  MySQL/MariaDB 建表 SQL
 database/postgresql/             pgvector 建表 SQL
@@ -116,7 +118,7 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 接口：
 
 - `POST /api/chat`：聚合响应。
-- `POST /api/chat/stream`：`meta`、`tool`（选中工具时）、`token`、`references`、`chart`、`done` 事件。工具状态会先于模型正文返回，便于界面及时展示调用结果。
+- `POST /api/chat/stream`：`meta`、`plan`、`tool`、`token`、`references`、零到多个 `chart`、`done` 事件。工具状态会先于模型正文返回，便于界面及时展示调用结果。
 - `GET /api/chat/options`：可选模型与 MCP 工具目录。
 - `GET /api/health`：检查 Repository、pgvector 和 MCP 状态。
 
@@ -128,6 +130,8 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 ```powershell
 $env:MCP_ENABLED = 'true'
 $env:MCP_WEATHER_SERVER = 'mcp-servers/weather-mcp-server.js'
+$env:MCP_AMAP_SERVER = 'mcp-servers/amap-mcp-server.js'
+$env:AMAP_MAPS_API_KEY = '<amap-web-service-key>'
 $env:MCP_REQUEST_TIMEOUT = '30s'
 mvn spring-boot:run
 
@@ -138,6 +142,8 @@ Invoke-RestMethod 'http://localhost:8080/api/mcp/weather?city=常州'
 
 天气 MCP 对 Open-Meteo 的瞬时网络错误和 `408/425/429/5xx` 响应执行有限重试，
 保留 2 分钟新鲜缓存，并在上游短时不可用时最多使用 30 分钟内的最近成功结果。
+省级批量天气先由模型选择高德行政区工具，再把返回的城市名和中心坐标绑定到一次
+天气调用；国家范围由模型同时规划本地展示名与国际通用查询名，不依赖省名或国家名硬编码。
 生产环境应为 STDIO server 配置绝对路径；工具失败时聊天链路会返回明确的
 `tool=error` 并安全降级，不会把实时天气失败误报成“知识库没有信息”。
 
@@ -149,6 +155,9 @@ mvn test
 
 Set-Location ..\frontend
 npm run build
+
+Set-Location ..
+.\scripts\verify-weather-flow.ps1
 ```
 
 发布前应验证：Java 单元/上下文测试、前端类型检查与生产构建、真实

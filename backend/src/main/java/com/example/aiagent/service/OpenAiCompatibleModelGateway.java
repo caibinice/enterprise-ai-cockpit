@@ -134,6 +134,81 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         return fallback.chart(question, references);
     }
 
+    @Override
+    public String jsonAnswer(
+        String systemPrompt,
+        String userPrompt,
+        String model,
+        int requestedMaxTokens
+    ) {
+        String selectedModel = modelCatalog.resolve(model);
+        if (!enabled()) {
+            return fallback.jsonAnswer(systemPrompt, userPrompt, selectedModel, requestedMaxTokens);
+        }
+        List<Map<String, String>> messages = List.of(
+            Map.of("role", "system", "content", systemPrompt),
+            Map.of("role", "user", "content", userPrompt)
+        );
+        int outputBudget = Math.max(256, Math.min(requestedMaxTokens, maxTokens(selectedModel)));
+        try {
+            return completeJson(messages, selectedModel, outputBudget, true);
+        } catch (Exception jsonModeError) {
+            log.info(
+                "Provider rejected JSON response mode for {}; retrying with prompt-only JSON contract: {}",
+                selectedModel,
+                jsonModeError.getMessage()
+            );
+            try {
+                return completeJson(messages, selectedModel, outputBudget, false);
+            } catch (Exception retryError) {
+                log.warn("Structured model request failed for {}: {}", selectedModel, retryError.getMessage());
+                return "";
+            }
+        }
+    }
+
+    private String completeJson(
+        List<Map<String, String>> messages,
+        String model,
+        int outputBudget,
+        boolean jsonMode
+    ) throws Exception {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", model);
+        body.put("messages", messages);
+        body.put("temperature", 0.1);
+        body.put("max_tokens", outputBudget);
+        if (jsonMode) body.put("response_format", Map.of("type", "json_object"));
+        String json = objectMapper.writeValueAsString(body);
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(normalizeBaseUrl(properties.baseUrl()) + "/chat/completions"))
+            .timeout(Duration.ofSeconds(120))
+            .header("Authorization", "Bearer " + properties.apiKey())
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+            .build();
+        HttpResponse<String> response = httpClient.send(
+            request,
+            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+        );
+        if (response.statusCode() >= 300) {
+            throw new IllegalStateException("HTTP " + response.statusCode());
+        }
+        JsonNode root = objectMapper.readTree(response.body());
+        JsonNode choice = root.path("choices").path(0);
+        JsonNode message = choice.path("message");
+        JsonNode content = message.path("content");
+        if (!content.isTextual() || content.asText().isBlank()) {
+            int reasoningChars = message.path("reasoning_content").asText("").length();
+            throw new IllegalStateException(
+                "Provider returned an empty structured response"
+                    + " (finishReason=" + choice.path("finish_reason").asText("unknown")
+                    + ", reasoningChars=" + reasoningChars + ")"
+            );
+        }
+        return content.asText();
+    }
+
     private String buildContext(List<RetrievedKnowledgeChunk> references) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < references.size(); i++) {
@@ -181,6 +256,6 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
     }
 
     private int maxTokens(String model) {
-        return ChatModelCatalog.PRO.equals(model) ? 8192 : 4096;
+        return ChatModelCatalog.PRO.equals(model) ? 16384 : 8192;
     }
 }
