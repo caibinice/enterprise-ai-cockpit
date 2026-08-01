@@ -37,6 +37,16 @@ const knownLocations = {
   '常州': { name: '常州', admin1: '江苏', country: '中国', latitude: 31.8107, longitude: 119.9741 },
   '上海': { name: '上海', admin1: '上海', country: '中国', latitude: 31.2304, longitude: 121.4737 },
   '南京': { name: '南京', admin1: '江苏', country: '中国', latitude: 32.0603, longitude: 118.7969 },
+  '无锡': { name: '无锡', admin1: '江苏', country: '中国', latitude: 31.4912, longitude: 120.3119 },
+  '徐州': { name: '徐州', admin1: '江苏', country: '中国', latitude: 34.2044, longitude: 117.2858 },
+  '南通': { name: '南通', admin1: '江苏', country: '中国', latitude: 31.9802, longitude: 120.8943 },
+  '连云港': { name: '连云港', admin1: '江苏', country: '中国', latitude: 34.5967, longitude: 119.2216 },
+  '淮安': { name: '淮安', admin1: '江苏', country: '中国', latitude: 33.6104, longitude: 119.0153 },
+  '盐城': { name: '盐城', admin1: '江苏', country: '中国', latitude: 33.3474, longitude: 120.1636 },
+  '扬州': { name: '扬州', admin1: '江苏', country: '中国', latitude: 32.3942, longitude: 119.4129 },
+  '镇江': { name: '镇江', admin1: '江苏', country: '中国', latitude: 32.1880, longitude: 119.4250 },
+  '泰州': { name: '泰州', admin1: '江苏', country: '中国', latitude: 32.4555, longitude: 119.9229 },
+  '宿迁': { name: '宿迁', admin1: '江苏', country: '中国', latitude: 33.9630, longitude: 118.2752 },
   '北京': { name: '北京', admin1: '北京', country: '中国', latitude: 39.9042, longitude: 116.4074 },
   '深圳': { name: '深圳', admin1: '广东', country: '中国', latitude: 22.5431, longitude: 114.0579 },
   '广州': { name: '广州', admin1: '广东', country: '中国', latitude: 23.1291, longitude: 113.2644 },
@@ -86,7 +96,7 @@ function requestJson(url, redirects = 0) {
       family: 4,
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'enterprise-ai-cockpit-mcp/1.2',
+        'User-Agent': 'enterprise-ai-cockpit-mcp/1.3',
       },
       timeout: requestTimeoutMs,
     }, (response) => {
@@ -163,50 +173,89 @@ async function getJson(url) {
   throw lastError || new Error('Remote service request failed');
 }
 
+function normalizeCityName(city) {
+  return String(city || '').trim().replace(/市$/, '');
+}
+
+function normalizeCityList(cities) {
+  const raw = Array.isArray(cities)
+    ? cities
+    : String(cities || '').split(/[,，、;；\s]+/);
+  const normalized = [...new Set(raw.map(normalizeCityName).filter(Boolean))];
+  if (!normalized.length) throw new Error('至少需要一个城市');
+  if (normalized.length > 20) throw new Error('单次最多查询 20 个城市');
+  if (normalized.some((city) => city.length > 40)) throw new Error('城市名称过长');
+  return normalized;
+}
+
+function cacheKeyFor(city) {
+  return normalizeCityName(city).toLowerCase();
+}
+
+async function resolveLocation(city) {
+  const requestedCity = normalizeCityName(city) || '常州';
+  let location = knownLocations[requestedCity];
+  if (location) return location;
+  const geocoding = new URL('https://geocoding-api.open-meteo.com/v1/search');
+  geocoding.searchParams.set('name', requestedCity);
+  geocoding.searchParams.set('count', '1');
+  geocoding.searchParams.set('language', 'zh');
+  geocoding.searchParams.set('format', 'json');
+  const locations = await getJson(geocoding);
+  [location] = locations.results || [];
+  if (!location) throw new Error(`未找到城市：${requestedCity}`);
+  return location;
+}
+
+async function fetchForecasts(locations) {
+  const forecast = new URL('https://api.open-meteo.com/v1/forecast');
+  forecast.searchParams.set('latitude', locations.map((location) => location.latitude).join(','));
+  forecast.searchParams.set('longitude', locations.map((location) => location.longitude).join(','));
+  forecast.searchParams.set(
+    'current',
+    'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m',
+  );
+  forecast.searchParams.set('timezone', 'auto');
+  const payload = await getJson(forecast);
+  const forecasts = Array.isArray(payload) ? payload : [payload];
+  if (forecasts.length !== locations.length) {
+    throw new Error(`天气服务返回 ${forecasts.length} 个结果，预期 ${locations.length} 个`);
+  }
+  return forecasts;
+}
+
+function weatherValue(location, data) {
+  const current = data.current || {};
+  if (!Number.isFinite(current.temperature_2m)) {
+    throw new Error(`天气服务未返回 ${location.name} 的有效气温`);
+  }
+  return {
+    city: location.name,
+    region: [location.admin1, location.country].filter(Boolean).join(' · '),
+    condition: weatherCodes[current.weather_code] || `天气代码 ${current.weather_code}`,
+    temperatureC: current.temperature_2m,
+    apparentTemperatureC: current.apparent_temperature,
+    humidityPercent: current.relative_humidity_2m,
+    windSpeedKmh: current.wind_speed_10m,
+    observedAt: current.time,
+    timezone: data.timezone,
+    source: 'Open-Meteo',
+    cached: false,
+    stale: false,
+  };
+}
+
 async function queryWeather(city) {
-  const requestedCity = String(city || '常州').trim();
-  const cacheKey = requestedCity.replace(/市$/, '').toLowerCase();
+  const requestedCity = normalizeCityName(city) || '常州';
+  const cacheKey = cacheKeyFor(requestedCity);
   const cached = weatherCache.get(cacheKey);
   if (cached && Date.now() - cached.savedAt <= freshCacheMs) {
     return { ...cached.value, cached: true, stale: false };
   }
-  let location = knownLocations[requestedCity.replace(/市$/, '')];
   try {
-    if (!location) {
-      const geocoding = new URL('https://geocoding-api.open-meteo.com/v1/search');
-      geocoding.searchParams.set('name', requestedCity);
-      geocoding.searchParams.set('count', '1');
-      geocoding.searchParams.set('language', 'zh');
-      geocoding.searchParams.set('format', 'json');
-      const locations = await getJson(geocoding);
-      [location] = locations.results || [];
-    }
-    if (!location) throw new Error(`未找到城市：${requestedCity}`);
-
-    const forecast = new URL('https://api.open-meteo.com/v1/forecast');
-    forecast.searchParams.set('latitude', String(location.latitude));
-    forecast.searchParams.set('longitude', String(location.longitude));
-    forecast.searchParams.set(
-      'current',
-      'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m',
-    );
-    forecast.searchParams.set('timezone', 'auto');
-    const data = await getJson(forecast);
-    const current = data.current || {};
-    const value = {
-      city: location.name,
-      region: [location.admin1, location.country].filter(Boolean).join(' · '),
-      condition: weatherCodes[current.weather_code] || `天气代码 ${current.weather_code}`,
-      temperatureC: current.temperature_2m,
-      apparentTemperatureC: current.apparent_temperature,
-      humidityPercent: current.relative_humidity_2m,
-      windSpeedKmh: current.wind_speed_10m,
-      observedAt: current.time,
-      timezone: data.timezone,
-      source: 'Open-Meteo',
-      cached: false,
-      stale: false,
-    };
+    const location = await resolveLocation(requestedCity);
+    const [data] = await fetchForecasts([location]);
+    const value = weatherValue(location, data);
     weatherCache.set(cacheKey, { value, savedAt: Date.now() });
     return value;
   } catch (error) {
@@ -224,6 +273,62 @@ async function queryWeather(city) {
     }
     throw error;
   }
+}
+
+async function queryWeatherBatch(cities, region) {
+  const requestedCities = normalizeCityList(cities);
+  const valuesByCity = new Map();
+  const missing = [];
+  for (const city of requestedCities) {
+    const cached = weatherCache.get(cacheKeyFor(city));
+    if (cached && Date.now() - cached.savedAt <= freshCacheMs) {
+      valuesByCity.set(city, { ...cached.value, cached: true, stale: false });
+    } else {
+      missing.push(city);
+    }
+  }
+
+  if (missing.length) {
+    try {
+      const locations = await Promise.all(missing.map(resolveLocation));
+      const forecasts = await fetchForecasts(locations);
+      missing.forEach((city, index) => {
+        const value = weatherValue(locations[index], forecasts[index]);
+        weatherCache.set(cacheKeyFor(city), { value, savedAt: Date.now() });
+        valuesByCity.set(city, value);
+      });
+    } catch (error) {
+      const staleValues = new Map();
+      for (const city of missing) {
+        const cached = weatherCache.get(cacheKeyFor(city));
+        if (!cached || Date.now() - cached.savedAt > staleCacheMs) throw error;
+        staleValues.set(city, {
+          ...cached.value,
+          cached: true,
+          stale: true,
+          warning: '实时天气服务暂时不可用，返回最近一次成功结果。',
+        });
+      }
+      logEvent('warn', 'weather_batch_stale_cache', {
+        cities: missing,
+        reason: error.message,
+      });
+      staleValues.forEach((value, city) => valuesByCity.set(city, value));
+    }
+  }
+
+  const values = requestedCities.map((city) => valuesByCity.get(city));
+  const derivedRegion = String(region || '').trim()
+    || [...new Set(values.map((value) => String(value.region || '').split(' · ')[0]).filter(Boolean))].join('、');
+  return {
+    queryType: 'weather-batch',
+    region: derivedRegion,
+    count: values.length,
+    cities: values,
+    temperatureUnit: '°C',
+    source: 'Open-Meteo',
+    observedAt: values.map((value) => value.observedAt).filter(Boolean).sort().at(-1),
+  };
 }
 
 function currentTime(timezone) {
@@ -317,11 +422,25 @@ function calculate(expression) {
 const tools = [
   {
     name: 'queryWeather',
-    description: '查询城市的实时天气、体感温度、湿度和风速。',
+    description: '查询一个或多个城市的实时天气、体感温度、湿度和风速。批量查询会一次返回全部城市。',
     inputSchema: {
       type: 'object',
-      properties: { city: { type: 'string', description: '城市名称' } },
-      required: ['city'],
+      properties: {
+        city: { type: 'string', description: '单个城市名称' },
+        cities: {
+          type: 'array',
+          description: '需要批量查询的城市名称，最多 20 个',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 20,
+          uniqueItems: true,
+        },
+        region: { type: 'string', description: '城市所属区域，用于结果与图表标题' },
+      },
+      anyOf: [
+        { required: ['city'] },
+        { required: ['cities'] },
+      ],
     },
   },
   {
@@ -359,7 +478,7 @@ async function handle(message) {
     send(id, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'enterprise-ai-utilities', version: '1.2.0' },
+      serverInfo: { name: 'enterprise-ai-utilities', version: '1.3.0' },
     });
     return;
   }
@@ -376,7 +495,9 @@ async function handle(message) {
     try {
       let value;
       if (params.name === 'queryWeather') {
-        value = await queryWeather(params.arguments?.city);
+        value = params.arguments?.cities !== undefined
+          ? await queryWeatherBatch(params.arguments.cities, params.arguments?.region)
+          : await queryWeather(params.arguments?.city);
       } else if (params.name === 'getCurrentTime') {
         value = currentTime(params.arguments?.timezone);
       } else if (params.name === 'calculate') {
@@ -442,6 +563,8 @@ module.exports = {
   calculate,
   currentTime,
   getJson,
+  normalizeCityList,
   queryWeather,
+  queryWeatherBatch,
   requestJson,
 };

@@ -5,6 +5,8 @@ import com.example.aiagent.model.McpToolOption;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -23,11 +25,20 @@ import org.springframework.stereotype.Service;
 public class McpToolService {
     private static final Logger log = LoggerFactory.getLogger(McpToolService.class);
     private static final Pattern EXPRESSION = Pattern.compile("[-+*/().\\d\\s]{3,}");
+    static final List<String> JIANGSU_CITIES = List.of(
+        "南京", "无锡", "徐州", "常州", "苏州", "南通", "连云港",
+        "淮安", "盐城", "扬州", "镇江", "泰州", "宿迁"
+    );
+    private static final List<String> KNOWN_CITIES = List.of(
+        "上海", "常州", "南京", "无锡", "徐州", "苏州", "南通", "连云港",
+        "淮安", "盐城", "扬州", "镇江", "泰州", "宿迁", "北京", "深圳",
+        "广州", "杭州", "成都", "重庆", "东京", "纽约", "伦敦", "巴黎"
+    );
     private static final List<McpToolOption> CATALOG = List.of(
         new McpToolOption(
             "weather",
             "实时天气",
-            "通过 Open-Meteo 查询城市当前天气、体感温度、湿度与风速。",
+            "通过 Open-Meteo 查询单个或多个城市的当前天气、体感温度、湿度与风速。",
             "queryWeather",
             true
         ),
@@ -84,7 +95,7 @@ public class McpToolService {
             return List.of();
         }
         List<McpExecutionResult> results = new ArrayList<>();
-        for (String rawId : new java.util.LinkedHashSet<>(selectedIds)) {
+        for (String rawId : new LinkedHashSet<>(selectedIds)) {
             String id = rawId == null ? "" : rawId.trim().toLowerCase(Locale.ROOT);
             McpToolOption option = BY_ID.get(id);
             if (option == null) {
@@ -158,7 +169,7 @@ public class McpToolService {
         String lower = text.toLowerCase(Locale.ROOT);
         return switch (id) {
             case "weather" -> containsAny(lower, "天气", "气温", "温度", "下雨", "weather")
-                ? Map.of("city", extractCity(text))
+                ? inferWeatherArguments(text)
                 : Map.of();
             case "time" -> containsAny(lower, "几点", "时间", "日期", "时区", "time", "date")
                 ? Map.of("timezone", extractTimezone(text))
@@ -171,6 +182,39 @@ public class McpToolService {
             }
             default -> Map.of();
         };
+    }
+
+    private Map<String, Object> inferWeatherArguments(String question) {
+        if (isJiangsuAllCitiesRequest(question)) {
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("cities", JIANGSU_CITIES);
+            arguments.put("region", "江苏");
+            return Map.copyOf(arguments);
+        }
+        List<String> mentionedCities = extractMentionedCities(question);
+        if (mentionedCities.size() > 1) {
+            return Map.of("cities", mentionedCities);
+        }
+        if (mentionedCities.size() == 1) {
+            return Map.of("city", mentionedCities.get(0));
+        }
+        return Map.of("city", extractCity(question));
+    }
+
+    private boolean isJiangsuAllCitiesRequest(String question) {
+        return question.contains("江苏") && containsAny(
+            question,
+            "所有城市", "全部城市", "各城市", "各市", "各地", "全省",
+            "地级市", "十三个城市", "13个城市"
+        );
+    }
+
+    private List<String> extractMentionedCities(String question) {
+        return KNOWN_CITIES.stream()
+            .filter(question::contains)
+            .distinct()
+            .sorted(Comparator.comparingInt(question::indexOf))
+            .toList();
     }
 
     private String invoke(String toolName, Map<String, Object> arguments) {
@@ -271,20 +315,13 @@ public class McpToolService {
     }
 
     private String extractCity(String question) {
-        for (String city : List.of(
-            "上海", "常州", "南京", "北京", "深圳", "广州", "杭州",
-            "苏州", "成都", "重庆", "东京", "纽约", "伦敦", "巴黎"
-        )) {
-            if (question.contains(city)) {
-                return city;
-            }
-        }
         String normalized = question;
         for (String noise : List.of(
             "帮我查一下", "帮我查询", "我想知道", "麻烦查询", "告诉我",
             "请问", "帮我查", "查询一下", "查一下", "想知道", "查询", "看看",
             "今天", "今日", "明天", "后天", "现在", "当前", "实时", "此刻",
-            "本地", "当地", "这里", "那边", "的"
+            "本地", "当地", "这里", "那边", "所有", "全部", "各个", "城市",
+            "全省", "的"
         )) {
             normalized = normalized.replace(noise, "");
         }

@@ -111,6 +111,24 @@ class McpToolServiceTest {
             .containsEntry("city", "无锡");
     }
 
+    @Test
+    void expandsJiangsuAllCitiesIntoOneBatchToolCall() {
+        McpSyncClient client = workingClient();
+        McpToolService service = new McpToolService(List.of(client));
+
+        service.executeSelected(
+            "江苏所有城市今天的天气，并展示各城市温度对比柱状图",
+            List.of("weather")
+        );
+
+        ArgumentCaptor<McpSchema.CallToolRequest> request =
+            ArgumentCaptor.forClass(McpSchema.CallToolRequest.class);
+        verify(client).callTool(request.capture());
+        assertThat(request.getValue().arguments())
+            .containsEntry("region", "江苏")
+            .containsEntry("cities", McpToolService.JIANGSU_CITIES);
+    }
+
     private McpSyncClient workingClient() {
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.isInitialized()).thenReturn(false);

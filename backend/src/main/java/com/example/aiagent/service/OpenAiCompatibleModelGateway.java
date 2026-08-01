@@ -181,6 +181,6 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
     }
 
     private int maxTokens(String model) {
-        return ChatModelCatalog.PRO.equals(model) ? 4096 : 2048;
+        return ChatModelCatalog.PRO.equals(model) ? 8192 : 4096;
     }
 }

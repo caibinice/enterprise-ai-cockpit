@@ -215,7 +215,11 @@
                       <strong>{{ message.role === 'assistant' ? 'Intelligence' : '你' }}</strong>
                       <span v-if="message.model">{{ modelName(message.model) }}</span>
                     </div>
-                    <p v-if="message.content" v-html="renderMessage(message.content)"></p>
+                    <div
+                      v-if="message.content"
+                      class="message-body"
+                      v-html="renderMessage(message.content)"
+                    ></div>
                     <div v-else class="typing-indicator" aria-label="正在生成回答">
                       <span></span><span></span><span></span>
                     </div>
@@ -232,7 +236,7 @@
                   <span>{{ toolGlyph(trace.id) }}</span>
                   <div>
                     <strong>{{ trace.name }}</strong>
-                    <small>{{ trace.output }}</small>
+                    <small :title="trace.output">{{ toolTraceSummary(trace) }}</small>
                   </div>
                 </div>
               </div>
@@ -250,7 +254,7 @@
                 <div class="composer-footer">
                   <div>
                     <el-switch v-model="chat.enableChart" size="small" />
-                    <span>需要时生成图表</span>
+                    <span>强制生成图表</span>
                     <span class="shortcut">⌘ / Ctrl + Enter</span>
                   </div>
                   <button
@@ -942,7 +946,7 @@ const suggestions = [
   '总结各业务知识库中的关键规则',
   '退款申请需要满足哪些条件？',
   '计算 (120 + 95) × 1.08',
-  '常州现在的天气怎么样？',
+  '江苏所有城市今天的天气，并展示气温对比柱状图',
 ];
 
 const modelStatusLabel = computed(() =>
@@ -1391,6 +1395,32 @@ function toolGlyph(id: string) {
   return ({ weather: '☀', time: '◷', calculator: '∑' } as Record<string, string>)[id] || '⌘';
 }
 
+function toolTraceSummary(trace: McpTrace) {
+  if (trace.status !== 'success' || trace.id !== 'weather') return trace.output;
+  type WeatherValue = { city?: string; temperatureC?: number };
+  type WeatherPayload = WeatherValue & {
+    region?: string;
+    count?: number;
+    cities?: WeatherValue[];
+    source?: string;
+  };
+  const payload = parseJson<WeatherPayload | null>(trace.output, null);
+  if (!payload) return trace.output;
+  if (Array.isArray(payload.cities) && payload.cities.length) {
+    const temperatures = payload.cities
+      .map((city) => city.temperatureC)
+      .filter((value): value is number => Number.isFinite(value));
+    const range = temperatures.length
+      ? ` · ${Math.min(...temperatures).toFixed(1)}–${Math.max(...temperatures).toFixed(1)}°C`
+      : '';
+    return `已获取${payload.region || ''} ${payload.count || payload.cities.length} 个城市${range} · ${payload.source || '实时天气'}`;
+  }
+  if (payload.city && Number.isFinite(payload.temperatureC)) {
+    return `${payload.city} ${Number(payload.temperatureC).toFixed(1)}°C · ${payload.source || '实时天气'}`;
+  }
+  return trace.output;
+}
+
 function businessGlyph(type: string) {
   if (type.includes('跨境')) return '◈';
   if (type.includes('量化')) return '⌁';
@@ -1404,20 +1434,66 @@ function prettyJson(value: string) {
   try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
 }
 
-function renderMessage(value: string) {
-  const escaped = value
+function escapeHtml(value: string) {
+  return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
-  return escaped
+}
+
+function renderInline(value: string) {
+  return escapeHtml(value)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(
       /\[Reference\s*(\d+)\]/gi,
       '<span class="inline-citation">引用 $1</span>',
-    )
-    .replace(/\n/g, '<br>');
+    );
+}
+
+function tableCells(line: string) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+function isTableSeparator(line: string) {
+  const cells = tableCells(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function renderMessage(value: string) {
+  const lines = value.replace(/\r/g, '').split('\n');
+  const output: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.includes('|') && index + 1 < lines.length && isTableSeparator(lines[index + 1])) {
+      const headers = tableCells(line);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+        rows.push(tableCells(lines[index]));
+        index += 1;
+      }
+      index -= 1;
+      output.push(
+        '<div class="message-table-wrap"><table class="message-table"><thead><tr>',
+        ...headers.map((cell) => `<th>${renderInline(cell)}</th>`),
+        '</tr></thead><tbody>',
+        ...rows.map((row) => `<tr>${headers.map((_, cellIndex) =>
+          `<td>${renderInline(row[cellIndex] || '')}</td>`).join('')}</tr>`),
+        '</tbody></table></div>',
+      );
+    } else if (!line.trim()) {
+      output.push('<div class="message-spacer"></div>');
+    } else if (/^\s*[-*]\s+/.test(line)) {
+      output.push(`<div class="message-list-item">${renderInline(line.replace(/^\s*[-*]\s+/, ''))}</div>`);
+    } else {
+      output.push(`<div>${renderInline(line)}</div>`);
+    }
+  }
+  return output.join('');
 }
 
 function resizeChart() {

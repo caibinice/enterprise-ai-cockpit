@@ -836,18 +836,72 @@ button:focus-visible,
   display: none;
 }
 
-.message-content p {
+.message-content .message-body {
   margin: 4px 0 0;
   color: #3e485b;
   font-size: 12px;
   line-height: 1.75;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.message-content p strong {
+.message-content .message-body strong {
   color: #2f3a50;
   font-weight: 680;
+}
+
+.message-spacer {
+  height: 8px;
+}
+
+.message-list-item {
+  position: relative;
+  padding-left: 14px;
+}
+
+.message-list-item::before {
+  position: absolute;
+  left: 2px;
+  color: #6675dd;
+  content: "•";
+}
+
+.message-table-wrap {
+  max-width: 100%;
+  margin: 10px 0 12px;
+  overflow-x: auto;
+  border: 1px solid rgba(55, 70, 104, 0.09);
+  border-radius: 11px;
+}
+
+.message-table {
+  width: 100%;
+  min-width: 520px;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.45;
+  border-collapse: collapse;
+}
+
+.message-table th,
+.message-table td {
+  padding: 7px 10px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid rgba(55, 70, 104, 0.07);
+}
+
+.message-table th {
+  color: #59657c;
+  font-weight: 680;
+  background: rgba(239, 242, 250, 0.82);
+}
+
+.message-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.message-table tbody tr:nth-child(even) {
+  background: rgba(246, 248, 252, 0.62);
 }
 
 .inline-citation {
@@ -863,7 +917,7 @@ button:focus-visible,
   border-radius: 6px;
 }
 
-.message-row.user .message-content p {
+.message-row.user .message-content .message-body {
   margin: 0;
   color: #fff;
   font-size: 11px;
@@ -902,7 +956,7 @@ button:focus-visible,
 
 .tool-trace {
   display: flex;
-  flex: 0 0 230px;
+  flex: 0 0 270px;
   gap: 8px;
   align-items: flex-start;
   padding: 8px 10px;
@@ -927,7 +981,7 @@ button:focus-visible,
 }
 
 .tool-trace small {
-  max-width: 190px;
+  max-width: 225px;
   margin-top: 2px;
   overflow: hidden;
   color: #8992a3;
@@ -1230,7 +1284,7 @@ i.warn {
 
 .chart {
   width: 100%;
-  height: 250px;
+  height: 310px;
   margin-top: 10px;
   background: linear-gradient(145deg, rgba(245, 247, 251, 0.8), rgba(238, 242, 252, 0.62));
   border-radius: 13px;

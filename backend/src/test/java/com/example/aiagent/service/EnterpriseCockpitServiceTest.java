@@ -5,6 +5,7 @@ import com.example.aiagent.model.KnowledgeBaseRequest;
 import com.example.aiagent.model.McpExecutionResult;
 import com.example.aiagent.model.ReportTemplateRequest;
 import com.example.aiagent.repository.InMemoryEnterpriseRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -193,6 +194,84 @@ class EnterpriseCockpitServiceTest {
     }
 
     @Test
+    void batchWeatherUsesToolDataForChartAndSkipsUnrelatedKnowledge() throws Exception {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        long kbId = knowledgeBaseService.createKnowledgeBase(
+            new KnowledgeBaseRequest("Quant KB", "", "QUANT")
+        );
+        knowledgeBaseService.importDocument(
+            kbId,
+            "factors.md",
+            "East revenue is 120 and factor momentum is positive.",
+            Map.of("category", "quant")
+        );
+        CapturingModelGateway gateway = new CapturingModelGateway();
+        McpToolService mcp = mock(McpToolService.class);
+        when(mcp.executeSelected(any(), any())).thenReturn(List.of(
+            new McpExecutionResult(
+                "weather",
+                "实时天气",
+                "success",
+                """
+                {"queryType":"weather-batch","region":"江苏","count":3,"source":"Open-Meteo","observedAt":"2026-08-01T14:00","cities":[
+                  {"city":"南京","temperatureC":35.2,"condition":"晴","humidityPercent":54,"stale":false},
+                  {"city":"无锡","temperatureC":34.1,"condition":"多云","humidityPercent":61,"stale":false},
+                  {"city":"徐州","temperatureC":32.8,"condition":"阴","humidityPercent":70,"stale":false}
+                ]}
+                """
+            )
+        ));
+        AiChatService chatService = new AiChatService(
+            repository,
+            knowledgeBaseService,
+            gateway,
+            new ChatModelCatalog(new com.example.aiagent.config.LlmProperties(
+                true,
+                "openai-compatible",
+                "https://example.test",
+                "test-key",
+                ChatModelCatalog.PRO
+            )),
+            objectMapper,
+            mcp
+        );
+
+        var events = chatService.stream(new ChatStreamRequest(
+            null,
+            "江苏所有城市今天的天气，并展示各城市温度对比柱状图",
+            ChatModelCatalog.PRO,
+            List.of(kbId),
+            Map.of(),
+            List.of("weather"),
+            true,
+            true
+        ));
+
+        assertThat(events).extracting("event")
+            .containsSubsequence("meta", "tool", "token", "references", "chart", "done");
+        assertThat(events.stream().filter(event -> event.event().equals("references"))
+            .findFirst().orElseThrow().data()).isEqualTo("[]");
+        JsonNode chart = objectMapper.readTree(events.stream()
+            .filter(event -> event.event().equals("chart"))
+            .findFirst().orElseThrow().data());
+        assertThat(chart.path("title").path("text").asText())
+            .contains("江苏")
+            .contains("实时气温");
+        assertThat(chart.path("xAxis").path("data").toString())
+            .contains("南京", "无锡", "徐州")
+            .doesNotContain("East");
+        assertThat(chart.path("series").path(0).path("name").asText())
+            .isEqualTo("实时气温");
+        assertThat(chart.path("series").path(0).path("data").path(0).path("value").asDouble())
+            .isEqualTo(35.2);
+        assertThat(gateway.lastQuestion)
+            .contains("批量天气结果")
+            .contains("江苏所有城市")
+            .contains("Open-Meteo");
+    }
+
+    @Test
     void chatExplainsToolFailureWithoutBlamingTheKnowledgeBase() {
         InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
         KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
@@ -221,9 +300,61 @@ class EnterpriseCockpitServiceTest {
             mcp
         );
 
-        chatService.chat(new ChatStreamRequest(
+        var response = chatService.chat(new ChatStreamRequest(
             null,
             "今天气怎么样",
+            ChatModelCatalog.FLASH,
+            List.of(),
+            Map.of(),
+            List.of("weather"),
+            true,
+            true
+        ));
+
+        assertThat(gateway.lastQuestion)
+            .contains("status=error")
+            .contains("工具暂时不可用")
+            .contains("不要编造实时数据")
+            .contains("实时天气暂时不可用");
+        assertThat(response.chartSpec()).isNull();
+    }
+
+    @Test
+    void emptyModelStreamRetriesThenFallsBackToTruthfulWeatherData() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        McpToolService mcp = mock(McpToolService.class);
+        when(mcp.executeSelected(any(), any())).thenReturn(List.of(
+            new McpExecutionResult(
+                "weather",
+                "实时天气",
+                "success",
+                """
+                {"queryType":"weather-batch","region":"江苏","count":2,"source":"Open-Meteo","observedAt":"2026-08-01T14:00","cities":[
+                  {"city":"南京","temperatureC":35.2,"condition":"晴","humidityPercent":54,"stale":false},
+                  {"city":"无锡","temperatureC":34.1,"condition":"多云","humidityPercent":61,"stale":false}
+                ]}
+                """
+            )
+        ));
+        AiChatService chatService = new AiChatService(
+            repository,
+            knowledgeBaseService,
+            new EmptyStreamModelGateway(),
+            new ChatModelCatalog(new com.example.aiagent.config.LlmProperties(
+                true,
+                "openai-compatible",
+                "https://example.test",
+                "test-key",
+                ChatModelCatalog.FLASH
+            )),
+            objectMapper,
+            mcp
+        );
+
+        var events = chatService.stream(new ChatStreamRequest(
+            null,
+            "江苏各城市天气",
             ChatModelCatalog.FLASH,
             List.of(),
             Map.of(),
@@ -232,11 +363,14 @@ class EnterpriseCockpitServiceTest {
             false
         ));
 
-        assertThat(gateway.lastQuestion)
-            .contains("status=error")
-            .contains("工具暂时不可用")
-            .contains("不要编造实时数据")
-            .contains("实时天气暂时不可用");
+        String answer = events.stream()
+            .filter(event -> event.event().equals("token"))
+            .map(com.example.aiagent.model.StreamEvent::data)
+            .reduce("", String::concat);
+        assertThat(answer)
+            .contains("南京", "无锡", "35.2°C", "34.1°C")
+            .contains("Open-Meteo")
+            .doesNotContain("No matching enterprise knowledge base evidence");
     }
 
     @Test
@@ -292,6 +426,36 @@ class EnterpriseCockpitServiceTest {
             String model
         ) {
             return Flux.just(answer(question, references, model));
+        }
+
+        @Override
+        public String chart(
+            String question,
+            List<com.example.aiagent.model.RetrievedKnowledgeChunk> references
+        ) {
+            return "{}";
+        }
+    }
+
+    private static final class EmptyStreamModelGateway implements ModelGateway {
+        @Override public boolean enabled() { return true; }
+
+        @Override
+        public String answer(
+            String question,
+            List<com.example.aiagent.model.RetrievedKnowledgeChunk> references,
+            String model
+        ) {
+            return "No matching enterprise knowledge base evidence was found.";
+        }
+
+        @Override
+        public Flux<String> streamAnswer(
+            String question,
+            List<com.example.aiagent.model.RetrievedKnowledgeChunk> references,
+            String model
+        ) {
+            return Flux.empty();
         }
 
         @Override
