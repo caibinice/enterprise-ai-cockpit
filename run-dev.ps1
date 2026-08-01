@@ -66,18 +66,15 @@ function Set-DefaultEnv {
 
 if ($null -ne $credentialsFile -and -not $UseMemory) {
   $credentialMap = Import-IniFile -Path $credentialsFile
+  if ($credentialMap.ContainsKey('cockpit.mysql.remote')) {
+    $credentialSectionPrefix = 'cockpit.'
+  }
   $mysql = Get-CredentialSection $credentialMap 'mysql.remote'
   $vector = Get-CredentialSection $credentialMap 'postgresql.vector'
   $llm = Get-CredentialSection $credentialMap 'deepseek.api'
   $amap = Get-CredentialSection $credentialMap 'amap.api'
   $embedding = Get-CredentialSection $credentialMap 'embedding'
   $action = Get-CredentialSection $credentialMap 'platform.action'
-  if ($null -eq $action -and (Test-Path -LiteralPath $sharedCredentialsFile)) {
-    $sharedCredentialMap = Import-IniFile -Path $sharedCredentialsFile
-    if ($sharedCredentialMap.ContainsKey('platform.action')) {
-      $action = $sharedCredentialMap['platform.action']
-    }
-  }
   if ($null -ne $mysql -and $null -ne $vector) {
     $mysqlPort = if ($mysql.ContainsKey('port')) { $mysql['port'] } else { '3306' }
     $vectorPort = if ($vector.ContainsKey('port')) { $vector['port'] } else { '5432' }
