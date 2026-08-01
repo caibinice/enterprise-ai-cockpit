@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import configparser
 import json
+import secrets
 import subprocess
 import sys
 import tarfile
@@ -18,20 +19,58 @@ sys.path.insert(0, str(QUANT_ROOT / "scripts" / "remote"))
 from remote_client import RemoteClient  # noqa: E402
 
 
-def read_credentials() -> configparser.ConfigParser:
-    path = ROOT / "credentials.txt"
+def read_credentials(
+    local: Path | None = None,
+    shared: Path | None = None,
+) -> configparser.ConfigParser:
+    local = local or ROOT / "credentials.txt"
+    shared = shared or BLOG_ROOT / "credentials.txt"
+    path = local if local.exists() else shared
     if not path.exists():
-        raise RuntimeError(f"Missing ignored credentials file: {path}")
+        raise RuntimeError(
+            "Missing project credentials.txt and shared ai-blog/credentials.txt"
+        )
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(path, encoding="utf-8")
-    return parser
+    if path == local:
+        return parser
+    resolved = configparser.ConfigParser(interpolation=None)
+    prefix = "cockpit."
+    for section in parser.sections():
+        if not section.startswith(prefix):
+            resolved[section] = dict(parser[section])
+    for section in parser.sections():
+        if section.startswith(prefix):
+            resolved[section.removeprefix(prefix)] = dict(parser[section])
+    return resolved
 
 
 def read_action_auth() -> dict[str, str]:
     path = BLOG_ROOT / ".deploy" / "action-auth.json"
-    if not path.exists():
-        raise RuntimeError(f"Missing shared action auth file: {path}")
-    value = json.loads(path.read_text(encoding="utf-8"))
+    if path.exists():
+        value = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        credentials = read_credentials()
+        password = credentials.get("platform.action", "password", fallback="")
+        if not password and (BLOG_ROOT / "credentials.txt").exists():
+            shared = configparser.ConfigParser(interpolation=None)
+            shared.read(BLOG_ROOT / "credentials.txt", encoding="utf-8")
+            password = shared.get("platform.action", "password", fallback="")
+        if not password:
+            raise RuntimeError(
+                "Missing shared action auth and [platform.action] password"
+            )
+        value = {
+            "password": password,
+            "tokenSecret": secrets.token_urlsafe(48),
+        }
+        for target in (
+            path,
+            QUANT_ROOT / ".deploy" / "action-auth.json",
+            STATE_DIR / "action-auth.json",
+        ):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(value, indent=2), encoding="utf-8")
     if not value.get("password") or not value.get("tokenSecret"):
         raise RuntimeError("Shared action auth file is incomplete")
     return value

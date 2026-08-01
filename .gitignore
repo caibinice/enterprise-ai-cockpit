@@ -15,3 +15,11 @@ output/
 __pycache__/
 *.pyc
 .idea
+.vscode/
+.claude/
+.codex/
+.cursor/
+.continue/
+.windsurf/
+.roo/
+.aider*

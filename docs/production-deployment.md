@@ -15,6 +15,10 @@
 `/opt/enterprise-ai-cockpit/shared/app.env`，生产示例见
 `deploy/application-production.env.example`。真实 MySQL、PostgreSQL、
 DeepSeek/OpenAI-compatible 和 embedding 密钥不得提交。
+发布脚本优先读取项目本地 `credentials.txt`；不存在时读取兄弟目录
+`ai-blog/credentials.txt` 的 `cockpit.*` 命名空间。新机器目录、分支、依赖
+bootstrap 和统一 GitHub 推送方式见
+`ai-blog/docs/new-machine-setup.md`。
 
 systemd 模板限制 Java 堆为 160MB、RSS 上限为 320MB，并把数据库池和
 Quartz 线程都限制为 2。Nginx 公开 `/smartCockpit/`，WebFlux
@@ -22,6 +26,8 @@ Quartz 线程都限制为 2。Nginx 公开 `/smartCockpit/`，WebFlux
 `/api/action-auth/verify` 换取 30 分钟签名令牌。`ACTION_PASSWORD` 和
 `ACTION_TOKEN_SECRET` 只保存在 `shared/app.env`。Quartz 直接调用服务层，
 不经过该过滤器。
+新机器没有旧 `.deploy` 时，会使用共享 `[platform.action] password` 生成新的
+本机签名密钥；这只会使旧的短期浏览器会话失效。
 
 前端关闭 source map，只混淆自有业务 chunk；Element Plus、ECharts 和 Vue
 保留为独立 vendor chunk。混淆不能替代后端验证。

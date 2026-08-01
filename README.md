@@ -10,6 +10,12 @@ STDIO 工具，以及按业务组织的知识库工作台。
 发布、SSE 代理与回滚说明见
 [`docs/production-deployment.md`](docs/production-deployment.md)。
 
+新机器统一按
+[`ai-blog` 的四仓库复现指南](https://github.com/caibinice/ai-blog/blob/main/docs/new-machine-setup.md)
+检出固定目录和分支，只需把真实 `credentials.txt` 放进兄弟目录
+`ai-blog`。本项目的本地启动与单项目发布均优先使用项目本地文件，不存在
+时自动读取共享文件中的 `cockpit.*` 命名空间。
+
 ## 现在项目做了什么
 
 - 知识库、文档、分块、metadata、数据源、报告运行记录和聊天消息通过 `EnterpriseRepository` 统一访问。
@@ -75,7 +81,16 @@ npm run dev
 ## 真实远端数据库配置
 
 真实配置放在本机忽略的 `credentials.txt`，不要把密码写入 YAML、README
-或 Git。模板见 [credentials.example.txt](./credentials.example.txt)。
+或 Git。也可以只保留兄弟目录 `ai-blog/credentials.txt`；模板及命名规则见
+[credentials.example.txt](./credentials.example.txt)。`run-dev.ps1` 会自动
+注入共享 MySQL、PostgreSQL、DeepSeek、Amap、embedding 和操作口令配置。
+
+不启动进程、只验证共享映射时运行：
+
+```powershell
+pwsh -File run-dev.ps1 `
+  -CredentialsPath ..\ai-blog\credentials.txt -ValidateConfigOnly
+```
 远端初始化 SQL 已执行过，后续环境可重复执行：
 
 ```powershell
@@ -173,6 +188,9 @@ DeepSeek Flash/Pro SSE、MCP 工具、MySQL Flyway、pgvector 行数，以及浏
 ```powershell
 & D:\codes\ai-quantum\.venv\Scripts\python.exe scripts\remote\deploy_cockpit.py
 ```
+
+若新机器尚无 `.deploy/action-auth.json`，脚本会从共享
+`[platform.action] password` 生成本机签名密钥，无需复制旧机器的 `.deploy`。
 
 测试数据脚本不会包含口令，需从忽略的本地配置注入当前进程，并按知识库
 代码和文档标题幂等写入。文章源文件位于 `demo-data/knowledge/`；首次完整执行
