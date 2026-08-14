@@ -970,7 +970,7 @@ const dsForm = reactive({
 const reportForm = reactive({
   name: '业务经营日报',
   scheduleType: 'CRON',
-  cron: '0 0 9 * * ?',
+  cron: '0 30 8 * * ?',
   dataSourceKey: 'business-metrics',
   knowledgeBaseId: 0,
   prompt: '结合业务指标与知识库，分析异常并给出建议。',

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$BaseUrl = 'https://101.132.78.217/smartCockpit/api'
+  [string]$BaseUrl = 'https://caibinice.com/smartCockpit/api'
 )
 
 $ErrorActionPreference = 'Stop'

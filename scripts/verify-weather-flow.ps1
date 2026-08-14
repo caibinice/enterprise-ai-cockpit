@@ -1,7 +1,7 @@
 param(
-  [string]$ProjectRoot = 'D:\codes\ai-agent-rag-demo',
+  [string]$ProjectRoot = 'D:\codes\enterprise-ai-cockpit',
   [int]$Port = 18080,
-  [string[]]$Models = @('deepseek-v4-flash', 'deepseek-v4-pro')
+  [string[]]$Models = @('deepseek-v4-flash')
 )
 
 $ErrorActionPreference = 'Stop'

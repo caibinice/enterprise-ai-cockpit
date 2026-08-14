@@ -16,15 +16,15 @@ public class ChatModelCatalog {
         new ModelOption(
             FLASH,
             "DeepSeek V4 Flash",
-            "响应更快，适合日常问答、检索总结与高频业务咨询。",
-            "快速",
+            "Flash 模型启用最高思考强度，兼顾成本、速度与复杂分析质量。",
+            "Thinking max",
             true
         ),
         new ModelOption(
             PRO,
             "DeepSeek V4 Pro",
-            "推理预算更高，适合复杂分析、跨文档归纳与决策建议。",
-            "深度推理",
+            "Pro 模型同样启用最高思考强度，适合按需执行复杂跨文档分析。",
+            "Thinking max",
             false
         )
     );

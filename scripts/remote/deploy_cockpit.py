@@ -162,6 +162,8 @@ def environment(
         "OPENAI_API_KEY": llm["api-key"],
         "DEEPSEEK_API_KEY": llm["api-key"],
         "LLM_MODEL": "deepseek-v4-flash",
+        "LLM_THINKING_ENABLED": "true",
+        "LLM_REASONING_EFFORT": "max",
         "VECTOR_ENABLED": "true",
         "VECTOR_DATABASE_URL": (
             "jdbc:postgresql://127.0.0.1:"
@@ -324,7 +326,7 @@ printf 'UNCHANGED_PIDS=nginx:%s,quant:%s,crossborder:%s\\n' \
         remote.close()
         archive.unlink(missing_ok=True)
 
-    print("PUBLIC_URL=https://101.132.78.217/smartCockpit/")
+    print(f"PUBLIC_URL=https://{remote.config['host']}/smartCockpit/")
     print(f"COCKPIT_RELEASE={release}")
 
 

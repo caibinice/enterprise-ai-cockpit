@@ -22,6 +22,8 @@ class ChatModelCatalogTest {
         assertThat(catalog.options())
             .extracting("id")
             .containsExactly(ChatModelCatalog.FLASH, ChatModelCatalog.PRO);
+        assertThat(catalog.resolve(ChatModelCatalog.FLASH))
+            .isEqualTo(ChatModelCatalog.FLASH);
         assertThat(catalog.resolve(ChatModelCatalog.PRO))
             .isEqualTo(ChatModelCatalog.PRO);
     }

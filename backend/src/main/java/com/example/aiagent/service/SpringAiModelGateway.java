@@ -97,11 +97,11 @@ public class SpringAiModelGateway implements ModelGateway {
             new SystemMessage(systemPrompt()),
             new UserMessage("知识库证据：\n" + buildContext(references) + "\n用户问题：\n" + question)
         );
-        int maxTokens = ChatModelCatalog.PRO.equals(model) ? 4096 : 2048;
+        int maxTokens = 4096;
         OpenAiChatOptions options = OpenAiChatOptions.builder()
             .model(model)
-            .temperature(0.2)
             .maxTokens(maxTokens)
+            .reasoningEffort("max")
             .build();
         return chatClient.prompt().messages(messages).options(options);
     }

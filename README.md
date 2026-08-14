@@ -19,7 +19,7 @@ STDIO 工具，以及按业务组织的知识库工作台。
 - 知识库、文档、分块、metadata、数据源、报告运行记录和聊天消息通过 `EnterpriseRepository` 统一访问。
 - `APP_REPOSITORY_MODE=mysql` 使用 `JdbcEnterpriseRepository`；`memory` 仍保留给无数据库演示和单元测试。
 - 文档导入后使用固定 1536 维 embedding 写入 PostgreSQL `enterprise_ai_vectors`，聊天优先走 pgvector cosine 检索，向量库不可用时回退 MySQL 关键词/CJK 检索。
-- 每次聊天可在 `deepseek-v4-flash` 与 `deepseek-v4-pro` 之间选择；服务端只接受白名单模型 ID，并按请求动态路由。`token` 事件来自上游 `/chat/completions` 的真实流。
+- 聊天默认使用 `deepseek-v4-flash`，并提供 `deepseek-v4-pro` 作为需操作口令的可选模型；两者都显式开启 Thinking 并设置 `reasoning_effort=max`。服务端只接受这两个白名单模型 ID，`token` 事件来自上游 `/chat/completions` 的真实流。
 - 聊天会带入最近 8 条会话消息；模型先输出结构化意图、地理范围与工具计划，Java 宿主完成授权、schema 校验、依赖编排和有限步执行，并返回规划、引用与 MCP 调用轨迹。
 - MCP Client 连接天气/通用工具和高德地图两个 STDIO 服务。高德负责行政区、地理编码和地点搜索，Open-Meteo 接收其权威城市坐标并执行最多 20 城的批量实时天气查询。
 - 最终回答使用受控 JSON 协议：正文与图表指令分离，仅允许柱状图、折线图和饼图；天气图表数值由宿主从 MCP 结果绑定，模型不能返回或执行 HTML、Canvas、Chart.js 代码。
@@ -63,7 +63,7 @@ credentials.txt                  本机真实配置，已被 .gitignore 排除
 环境要求：JDK 17+、Maven 3.9+、Node.js 20+。如果只验证无数据库内存模式：
 
 ```powershell
-Set-Location D:\codes\ai-agent-rag-demo\backend
+Set-Location D:\codes\enterprise-ai-cockpit\backend
 $env:APP_REPOSITORY_MODE = 'memory'
 $env:VECTOR_ENABLED = 'false'
 $env:LLM_ENABLED = 'false'
@@ -73,7 +73,7 @@ mvn spring-boot:run
 另开终端启动前端：
 
 ```powershell
-Set-Location D:\codes\ai-agent-rag-demo\frontend
+Set-Location D:\codes\enterprise-ai-cockpit\frontend
 npm ci
 npm run dev
 ```
@@ -137,7 +137,7 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 - `GET /api/chat/options`：可选模型与 MCP 工具目录。
 - `GET /api/health`：检查 Repository、pgvector 和 MCP 状态。
 
-请求体的 `model` 仅允许 `deepseek-v4-flash` 和 `deepseek-v4-pro`。
+请求体的 `model` 仅允许 `deepseek-v4-flash` 或 `deepseek-v4-pro`。
 不传时使用 `LLM_MODEL`；Pro 使用更高的输出预算以容纳推理阶段。
 
 ## MCP 工具测试
@@ -165,7 +165,7 @@ Invoke-RestMethod 'http://localhost:8080/api/mcp/weather?city=常州'
 ## 测试与验证
 
 ```powershell
-Set-Location D:\codes\ai-agent-rag-demo\backend
+Set-Location D:\codes\enterprise-ai-cockpit\backend
 mvn test
 
 Set-Location ..\frontend

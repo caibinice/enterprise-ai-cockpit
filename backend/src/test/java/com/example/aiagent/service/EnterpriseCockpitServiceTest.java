@@ -70,7 +70,7 @@ class EnterpriseCockpitServiceTest {
         long kbId = knowledgeBaseService.createKnowledgeBase(new KnowledgeBaseRequest("Report KB", "Automated reports", "REPORT"));
 
         var run = reportService.runTemplate(new ReportTemplateRequest(
-            "Sales Daily", "CRON", "0 0 9 * * ?", "mock-sales", kbId,
+            "Sales Daily", "CRON", "0 30 8 * * ?", "mock-sales", kbId,
             "Analyze sales trend", "region,amount", true));
 
         assertThat(run.status()).isEqualTo("SUCCESS");
@@ -126,7 +126,7 @@ class EnterpriseCockpitServiceTest {
         chatService.chat(new ChatStreamRequest(
             "conversation-1",
             "刚才的规则适用于谁？",
-            ChatModelCatalog.PRO,
+            ChatModelCatalog.FLASH,
             List.of(kbId),
             Map.of(),
             List.of(),
@@ -134,7 +134,7 @@ class EnterpriseCockpitServiceTest {
             false
         ));
 
-        assertThat(gateway.lastModel).isEqualTo(ChatModelCatalog.PRO);
+        assertThat(gateway.lastModel).isEqualTo(ChatModelCatalog.FLASH);
         assertThat(gateway.lastQuestion)
             .contains("最近对话")
             .contains("退款期限是什么？")
@@ -231,7 +231,7 @@ class EnterpriseCockpitServiceTest {
                 "openai-compatible",
                 "https://example.test",
                 "test-key",
-                ChatModelCatalog.PRO
+                ChatModelCatalog.FLASH
             )),
             objectMapper,
             mcp
@@ -240,7 +240,7 @@ class EnterpriseCockpitServiceTest {
         var events = chatService.stream(new ChatStreamRequest(
             null,
             "江苏所有城市今天的天气，并展示各城市温度对比柱状图",
-            ChatModelCatalog.PRO,
+            ChatModelCatalog.FLASH,
             List.of(kbId),
             Map.of(),
             List.of("weather"),

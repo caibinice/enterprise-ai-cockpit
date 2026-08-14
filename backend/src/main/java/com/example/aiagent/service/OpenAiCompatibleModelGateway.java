@@ -69,11 +69,8 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         String selectedModel = modelCatalog.resolve(model);
         if (!enabled()) return fallback.answer(question, references, selectedModel);
         try {
-            Map<String, Object> body = Map.of(
-                "model", selectedModel,
-                "messages", messages(question, references),
-                "temperature", 0.2,
-                "max_tokens", maxTokens(selectedModel)
+            Map<String, Object> body = requestBody(
+                messages(question, references), selectedModel, maxTokens(selectedModel)
             );
             String json = objectMapper.writeValueAsString(body);
             HttpRequest request = HttpRequest.newBuilder()
@@ -176,8 +173,8 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("model", model);
         body.put("messages", messages);
-        body.put("temperature", 0.1);
         body.put("max_tokens", outputBudget);
+        applyThinking(body);
         if (jsonMode) body.put("response_format", Map.of("type", "json_object"));
         String json = objectMapper.writeValueAsString(body);
         HttpRequest request = HttpRequest.newBuilder()
@@ -224,13 +221,11 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         List<RetrievedKnowledgeChunk> references,
         String model
     ) {
-        return Map.of(
-            "model", model,
-            "messages", messages(question, references),
-            "temperature", 0.2,
-            "max_tokens", maxTokens(model),
-            "stream", true
+        Map<String, Object> body = requestBody(
+            messages(question, references), model, maxTokens(model)
         );
+        body.put("stream", true);
+        return body;
     }
 
     private List<Map<String, String>> messages(String question, List<RetrievedKnowledgeChunk> references) {
@@ -255,7 +250,25 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
+    private Map<String, Object> requestBody(
+        List<Map<String, String>> messages,
+        String model,
+        int maxTokens
+    ) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", model);
+        body.put("messages", messages);
+        body.put("max_tokens", maxTokens);
+        applyThinking(body);
+        return body;
+    }
+
+    private void applyThinking(Map<String, Object> body) {
+        body.put("thinking", Map.of("type", "enabled"));
+        body.put("reasoning_effort", "max");
+    }
+
     private int maxTokens(String model) {
-        return ChatModelCatalog.PRO.equals(model) ? 16384 : 8192;
+        return 16384;
     }
 }
