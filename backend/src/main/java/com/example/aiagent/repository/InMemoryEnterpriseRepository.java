@@ -82,8 +82,13 @@ public class InMemoryEnterpriseRepository implements EnterpriseRepository {
         KnowledgeDocumentResponse doc = new KnowledgeDocumentResponse(documentId, knowledgeBaseId, title, content, safeMeta, chunks.size(), Instant.now());
         documents.put(documentId, doc);
         List<RetrievedKnowledgeChunk> refs = new ArrayList<>();
-        for (String chunk : chunks) {
-            refs.add(new RetrievedKnowledgeChunk(ids.incrementAndGet(), documentId, knowledgeBaseId, title, chunk, 0.0, safeMeta));
+        for (int order = 0; order < chunks.size(); order++) {
+            Map<String, String> chunkMeta = new LinkedHashMap<>(safeMeta);
+            chunkMeta.put("_chunkOrder", String.valueOf(order));
+            refs.add(new RetrievedKnowledgeChunk(
+                ids.incrementAndGet(), documentId, knowledgeBaseId, title,
+                chunks.get(order), 0.0, Map.copyOf(chunkMeta)
+            ));
         }
         documentChunks.put(documentId, refs);
         return doc;
@@ -110,9 +115,44 @@ public class InMemoryEnterpriseRepository implements EnterpriseRepository {
         KnowledgeDocumentResponse updated = new KnowledgeDocumentResponse(old.id(), old.knowledgeBaseId(), old.title(), old.content(), safe, old.chunks(), old.createdAt());
         documents.put(id, updated);
         List<RetrievedKnowledgeChunk> chunks = documentChunks.getOrDefault(id, List.of()).stream()
-            .map(c -> new RetrievedKnowledgeChunk(c.id(), c.documentId(), c.knowledgeBaseId(), c.title(), c.content(), c.score(), safe))
+            .map(c -> {
+                Map<String, String> chunkMeta = new LinkedHashMap<>(safe);
+                chunkMeta.put("_chunkOrder", c.metadata().getOrDefault("_chunkOrder", "0"));
+                return new RetrievedKnowledgeChunk(
+                    c.id(), c.documentId(), c.knowledgeBaseId(), c.title(),
+                    c.content(), c.score(), Map.copyOf(chunkMeta)
+                );
+            })
             .toList();
         documentChunks.put(id, chunks);
+    }
+
+    @Override
+    public synchronized KnowledgeDocumentResponse replaceDocumentIndex(
+        long id,
+        Map<String, String> metadata,
+        List<String> chunks
+    ) {
+        KnowledgeDocumentResponse old = documents.get(id);
+        if (old == null) throw new IllegalArgumentException("Document not found: " + id);
+        Map<String, String> safeMeta = metadata == null ? Map.of() : new LinkedHashMap<>(metadata);
+        List<String> safeChunks = chunks == null ? List.of() : chunks;
+        KnowledgeDocumentResponse updated = new KnowledgeDocumentResponse(
+            old.id(), old.knowledgeBaseId(), old.title(), old.content(), safeMeta,
+            safeChunks.size(), old.createdAt()
+        );
+        documents.put(id, updated);
+        List<RetrievedKnowledgeChunk> references = new ArrayList<>();
+        for (int order = 0; order < safeChunks.size(); order++) {
+            Map<String, String> chunkMeta = new LinkedHashMap<>(safeMeta);
+            chunkMeta.put("_chunkOrder", String.valueOf(order));
+            references.add(new RetrievedKnowledgeChunk(
+                ids.incrementAndGet(), id, old.knowledgeBaseId(), old.title(),
+                safeChunks.get(order), 0.0, Map.copyOf(chunkMeta)
+            ));
+        }
+        documentChunks.put(id, references);
+        return updated;
     }
 
     @Override

@@ -10,7 +10,10 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collections;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -133,17 +136,84 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
 
     @Override
     public List<RetrievedKnowledgeChunk> findAllChunks() {
-        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks ORDER BY id", this::mapChunk);
+        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata, chunk_order FROM knowledge_chunks ORDER BY id", this::mapChunk);
+    }
+
+    @Override
+    @Transactional
+    public KnowledgeDocumentResponse replaceDocumentIndex(
+        long id,
+        Map<String, String> metadata,
+        List<String> chunks
+    ) {
+        KnowledgeDocumentResponse document = findDocument(id)
+            .orElseThrow(() -> new IllegalArgumentException("Document not found: " + id));
+        List<String> safeChunks = chunks == null ? List.of() : chunks;
+        String serialized = json(metadata);
+        jdbcTemplate.update(
+            "UPDATE knowledge_documents SET metadata = ?, chunk_count = ? WHERE id = ?",
+            serialized,
+            safeChunks.size(),
+            id
+        );
+        jdbcTemplate.update("DELETE FROM knowledge_chunks WHERE document_id = ?", id);
+        for (int order = 0; order < safeChunks.size(); order++) {
+            insert("""
+                INSERT INTO knowledge_chunks(document_id, knowledge_base_id, title, content, metadata, chunk_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, id, document.knowledgeBaseId(), document.title(), safeChunks.get(order), serialized, order);
+        }
+        return findDocument(id).orElseThrow();
     }
 
     @Override
     public List<RetrievedKnowledgeChunk> findChunksByDocumentId(long documentId) {
-        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks WHERE document_id = ? ORDER BY id", this::mapChunk, documentId);
+        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata, chunk_order FROM knowledge_chunks WHERE document_id = ? ORDER BY chunk_order, id", this::mapChunk, documentId);
     }
 
     @Override
     public List<RetrievedKnowledgeChunk> findChunksByKnowledgeBaseId(long knowledgeBaseId) {
-        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata FROM knowledge_chunks WHERE knowledge_base_id = ? ORDER BY id", this::mapChunk, knowledgeBaseId);
+        return jdbcTemplate.query("SELECT id, document_id, knowledge_base_id, title, content, metadata, chunk_order FROM knowledge_chunks WHERE knowledge_base_id = ? ORDER BY document_id, chunk_order, id", this::mapChunk, knowledgeBaseId);
+    }
+
+    @Override
+    public List<RetrievedKnowledgeChunk> findKeywordCandidates(
+        List<Long> knowledgeBaseIds,
+        List<String> terms,
+        int limit
+    ) {
+        List<Long> kbIds = knowledgeBaseIds == null ? List.of() : knowledgeBaseIds;
+        List<String> safeTerms = terms == null ? List.of() : new ArrayList<>(new LinkedHashSet<>(terms)).stream()
+            .filter(java.util.Objects::nonNull)
+            .map(value -> value.trim().toLowerCase(Locale.ROOT))
+            .filter(value -> !value.isBlank())
+            .limit(12)
+            .toList();
+        StringBuilder sql = new StringBuilder(
+            "SELECT id, document_id, knowledge_base_id, title, content, metadata, chunk_order FROM knowledge_chunks WHERE 1=1"
+        );
+        List<Object> args = new ArrayList<>();
+        if (!kbIds.isEmpty()) {
+            sql.append(" AND knowledge_base_id IN (")
+                .append("?, ".repeat(Math.max(0, kbIds.size() - 1)))
+                .append("?)");
+            args.addAll(kbIds);
+        }
+        if (!safeTerms.isEmpty()) {
+            sql.append(" AND (");
+            for (int index = 0; index < safeTerms.size(); index++) {
+                if (index > 0) sql.append(" OR ");
+                sql.append("(LOWER(title) LIKE ? ESCAPE '!' OR LOWER(content) LIKE ? ESCAPE '!' OR LOWER(metadata) LIKE ? ESCAPE '!')");
+                String pattern = "%" + escapeLike(safeTerms.get(index)) + "%";
+                args.add(pattern);
+                args.add(pattern);
+                args.add(pattern);
+            }
+            sql.append(')');
+        }
+        sql.append(" ORDER BY created_at DESC, id DESC LIMIT ?");
+        args.add(Math.min(80, Math.max(1, limit)));
+        return jdbcTemplate.query(sql.toString(), this::mapChunk, args.toArray());
     }
 
     @Override
@@ -249,8 +319,10 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
     }
 
     private RetrievedKnowledgeChunk mapChunk(ResultSet rs, int rowNum) throws SQLException {
+        Map<String, String> metadata = new java.util.LinkedHashMap<>(parseMetadata(rs.getString("metadata")));
+        metadata.put("_chunkOrder", String.valueOf(rs.getInt("chunk_order")));
         return new RetrievedKnowledgeChunk(rs.getLong("id"), rs.getLong("document_id"), rs.getLong("knowledge_base_id"),
-            rs.getString("title"), rs.getString("content"), 0.0, parseMetadata(rs.getString("metadata")));
+            rs.getString("title"), rs.getString("content"), 0.0, Map.copyOf(metadata));
     }
 
     private DataSourceResponse mapDataSource(ResultSet rs, int rowNum) throws SQLException {
@@ -299,4 +371,7 @@ public class JdbcEnterpriseRepository implements EnterpriseRepository {
 
     private static String nz(String value) { return value == null ? "" : value; }
     private static String blankToDefault(String value, String fallback) { return value == null || value.isBlank() ? fallback : value; }
+    private static String escapeLike(String value) {
+        return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
+    }
 }

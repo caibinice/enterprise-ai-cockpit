@@ -453,8 +453,58 @@
                     <div><span>知识库代码</span><strong>{{ selectedKnowledgeBase.code }}</strong></div>
                     <div><span>文档数量</span><strong>{{ selectedKbDocuments.length }}</strong></div>
                     <div><span>分块数量</span><strong>{{ selectedKbChunkCount }}</strong></div>
-                    <div><span>检索方式</span><strong>向量 + 关键词</strong></div>
+                    <div><span>检索方式</span><strong>Hybrid + RRF</strong></div>
                   </div>
+
+                  <section class="retrieval-lab">
+                    <div class="retrieval-lab-heading">
+                      <div>
+                        <span class="section-kicker">RETRIEVAL LAB</span>
+                        <h3>检索质量测试</h3>
+                        <p>直接观察结构化分块、Dense + Keyword 融合、重排和去重后的证据。</p>
+                      </div>
+                      <div class="retrieval-lab-actions">
+                        <span v-if="retrievalStrategy" class="strategy-chip">{{ retrievalStrategy }}</span>
+                        <el-button text :loading="loading.reindex" @click="reindexKnowledgeBase">
+                          按新策略重建索引
+                        </el-button>
+                      </div>
+                    </div>
+                    <div class="retrieval-query-row">
+                      <el-input
+                        v-model="retrievalQuery"
+                        clearable
+                        placeholder="输入业务问题、SKU、合同编号或错误码…"
+                        @keyup.enter="testRetrieval"
+                      />
+                      <el-button
+                        type="primary"
+                        :loading="loading.retrieval"
+                        :disabled="!retrievalQuery.trim()"
+                        @click="testRetrieval"
+                      >
+                        测试检索
+                      </el-button>
+                    </div>
+                    <div v-if="retrievalHits.length" class="retrieval-hit-list">
+                      <button
+                        v-for="(hit, index) in retrievalHits"
+                        :key="hit.id"
+                        type="button"
+                        @click="activeReference = hit"
+                      >
+                        <span class="reference-index">{{ index + 1 }}</span>
+                        <span>
+                          <strong>{{ hit.title }}</strong>
+                          <small>{{ excerpt(hit.content, 125) }}</small>
+                        </span>
+                        <em>{{ formatScore(hit.score) }}</em>
+                      </button>
+                    </div>
+                    <div v-else-if="retrievalTested && !loading.retrieval" class="retrieval-empty">
+                      当前问题没有命中有效知识；可检查文档状态、有效期、metadata 或分块内容。
+                    </div>
+                  </section>
 
                   <div class="document-heading">
                     <div>
@@ -917,6 +967,10 @@ const messages = ref<Message[]>([]);
 const toolTraces = ref<McpTrace[]>([]);
 const selectedKbId = ref(0);
 const kbSearch = ref('');
+const retrievalQuery = ref('');
+const retrievalHits = ref<Reference[]>([]);
+const retrievalStrategy = ref('');
+const retrievalTested = ref(false);
 const files = ref<File[]>([]);
 const createKbOpen = ref(false);
 const importOpen = ref(false);
@@ -935,6 +989,8 @@ const loading = reactive({
   chat: false,
   kb: false,
   import: false,
+  retrieval: false,
+  reindex: false,
   weather: false,
 });
 let messageId = 0;
@@ -1021,6 +1077,9 @@ watch(() => [...chat.mcpToolIds], (value) => {
 }, { deep: true });
 watch(selectedKbId, (id) => {
   if (id && !chat.knowledgeBaseIds.length) chat.knowledgeBaseIds = [id];
+  retrievalHits.value = [];
+  retrievalStrategy.value = '';
+  retrievalTested.value = false;
 });
 
 async function refreshAll(showSuccess = false) {
@@ -1262,6 +1321,59 @@ async function importText() {
     ElMessage.error(errorMessage(error));
   } finally {
     loading.import = false;
+  }
+}
+
+async function testRetrieval() {
+  const query = retrievalQuery.value.trim();
+  if (!selectedKbId.value) return ElMessage.warning('请先选择知识库');
+  if (!query) return ElMessage.warning('请输入要验证的问题');
+  loading.retrieval = true;
+  retrievalTested.value = true;
+  try {
+    const result = await api<{
+      strategy: string;
+      hits: Reference[];
+    }>('/admin/retrieval-test', {
+      method: 'POST',
+      body: JSON.stringify({
+        query,
+        knowledgeBaseIds: [selectedKbId.value],
+        metadataFilter: {},
+        topK: 8,
+      }),
+    });
+    retrievalStrategy.value = result.strategy;
+    retrievalHits.value = result.hits;
+  } catch (error) {
+    retrievalHits.value = [];
+    retrievalStrategy.value = '';
+    ElMessage.error(errorMessage(error));
+  } finally {
+    loading.retrieval = false;
+  }
+}
+
+async function reindexKnowledgeBase() {
+  if (!selectedKbId.value) return ElMessage.warning('请先选择知识库');
+  loading.reindex = true;
+  try {
+    const result = await api<{
+      documents: number;
+      previousChunks: number;
+      currentChunks: number;
+      chunkStrategy: string;
+    }>(`/admin/documents/reindex?knowledgeBaseId=${selectedKbId.value}`, { method: 'POST' });
+    retrievalHits.value = [];
+    retrievalTested.value = false;
+    await refreshAll();
+    ElMessage.success(
+      `已按 ${result.chunkStrategy} 重建 ${result.documents} 篇文档：${result.previousChunks} → ${result.currentChunks} 个分块`,
+    );
+  } catch (error) {
+    ElMessage.error(errorMessage(error));
+  } finally {
+    loading.reindex = false;
   }
 }
 

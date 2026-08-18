@@ -18,13 +18,14 @@ STDIO 工具，以及按业务组织的知识库工作台。
 
 - 知识库、文档、分块、metadata、数据源、报告运行记录和聊天消息通过 `EnterpriseRepository` 统一访问。
 - `APP_REPOSITORY_MODE=mysql` 使用 `JdbcEnterpriseRepository`；`memory` 仍保留给无数据库演示和单元测试。
-- 文档导入后使用固定 1536 维 embedding 写入 PostgreSQL `enterprise_ai_vectors`，聊天优先走 pgvector cosine 检索，向量库不可用时回退 MySQL 关键词/CJK 检索。
+- 文档导入先按标题、段落和句子边界做结构感知分块，子块携带章节上下文与少量重叠，并写入来源、解析器、内容哈希、导入时间和分块策略等可追溯元数据；随后使用固定 1536 维 embedding 写入 PostgreSQL `enterprise_ai_vectors`。
+- 检索同时召回 pgvector cosine 与 MySQL 关键词/CJK 候选，以 RRF 融合，再对完整短语、合同号/SKU/错误码、版本与新鲜度做轻量重排；最终去重并合并同一文档的相邻分块。`status`、`effectiveFrom`、`effectiveTo`、`supersededBy` 用于默认排除草稿、失效和被替代知识。
 - 聊天默认使用 `deepseek-v4-flash`，并提供 `deepseek-v4-pro` 作为需操作口令的可选模型；两者都显式开启 Thinking 并设置 `reasoning_effort=max`。服务端只接受这两个白名单模型 ID，`token` 事件来自上游 `/chat/completions` 的真实流。
-- 聊天会带入最近 8 条会话消息；模型先输出结构化意图、地理范围与工具计划，Java 宿主完成授权、schema 校验、依赖编排和有限步执行，并返回规划、引用与 MCP 调用轨迹。
+- 聊天会带入最近 8 条会话消息，并在“刚才/该规则/what about”等指代型追问中拼接上一条用户问题作为检索查询；模型先输出结构化意图、地理范围与工具计划，Java 宿主完成授权、schema 校验、依赖编排和有限步执行，并返回规划、引用与 MCP 调用轨迹。
 - MCP Client 连接天气/通用工具和高德地图两个 STDIO 服务。高德负责行政区、地理编码和地点搜索，Open-Meteo 接收其权威城市坐标并执行最多 20 城的批量实时天气查询。
 - 最终回答使用受控 JSON 协议：正文与图表指令分离，仅允许柱状图、折线图和饼图；天气图表数值由宿主从 MCP 结果绑定，模型不能返回或执行 HTML、Canvas、Chart.js 代码。
 - 知识库按业务类型隔离，支持文本和文件导入、元数据、自动分块、MySQL 元数据与 pgvector 生命周期同步；创建、导入和删除等关键操作由 Java 后端短期令牌保护。
-- 前端提供 Apple 风格响应式座舱、固定高度且自动滚底的对话区、Enter 发送/Ctrl+Enter 换行、独立知识库工作台、模型/MCP 选择、流式停止、引用查看、多图表、数据源与报告页面。
+- 前端提供 Apple 风格响应式座舱、固定高度且自动滚底的对话区、Enter 发送/Ctrl+Enter 换行、独立知识库工作台、模型/MCP 选择、流式停止、引用查看、多图表、数据源与报告页面；知识库页的 Retrieval Lab 可直接输入问题观察融合检索结果和分数。
 
 ## 链路结构
 
@@ -136,6 +137,8 @@ $env:LLM_MODEL = 'deepseek-v4-flash'
 - `POST /api/chat/stream`：`meta`、`plan`、`tool`、`token`、`references`、零到多个 `chart`、`done` 事件。工具状态会先于模型正文返回，便于界面及时展示调用结果。
 - `GET /api/chat/options`：可选模型与 MCP 工具目录。
 - `GET /api/health`：检查 Repository、pgvector 和 MCP 状态。
+- `POST /api/admin/retrieval-test`：受操作令牌保护的检索质量测试，返回 Hybrid + RRF 重排后的证据列表和策略说明。
+- `POST /api/admin/documents/reindex?knowledgeBaseId=...`：使用当前 provenance 与结构感知分块策略原位重建历史文档和向量；知识库页也提供受保护的操作按钮。
 
 请求体的 `model` 仅允许 `deepseek-v4-flash` 或 `deepseek-v4-pro`。
 不传时使用 `LLM_MODEL`；Pro 使用更高的输出预算以容纳推理阶段。

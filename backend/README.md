@@ -7,10 +7,12 @@ Spring Boot 3.5.3 + Java 17 的 WebFlux API。后端现在默认按真实持久�
 - `JdbcEnterpriseRepository`：实现知识库、文档、分块、metadata、数据源、报告和聊天消息的 JDBC CRUD。
 - `InMemoryEnterpriseRepository`：仅在 `APP_REPOSITORY_MODE=memory` 时生效。
 - `EmbeddingService`：默认确定性 local embedding，维度 1536；可切换 OpenAI-compatible `/embeddings`。
-- `PostgresVectorIndexService`：写入 `enterprise_ai_vectors`，使用 cosine distance 检索；异常时回退 MySQL 关键词检索。
+- `StructuredChunker`：按标题、段落和句子边界分块，保留章节上下文、有限重叠并去除完全重复块。
+- `PostgresVectorIndexService` + Repository 关键词候选：并行形成 dense/lexical 候选，使用 RRF 融合，再按完整短语、业务标识符、版本与时效性重排；单路异常时另一条检索链仍可工作。
+- `KnowledgeBaseService`：维护来源/解析器/哈希/导入时间等 provenance，并用 `status`、`effectiveFrom`、`effectiveTo`、`supersededBy` 管理有效知识；结果会去重并合并相邻分块。
 - `SpringAiModelGateway`：`ChatClient.stream().content()` 输出真实 Reactor 流。
 - `OpenAiCompatibleModelGateway`：可选的直接 WebClient SSE 网关，使用 `LLM_PROVIDER=openai-compatible`。
-- `McpWeatherService`：懒初始化 Spring AI MCP STDIO 客户端，连接 `mcp-servers/weather-mcp-server.js`。
+- `McpWeatherService`：懒初始化 Spring AI MCP STDIO 客户端，连接 `mcp-servers/weather-mcp-server.js`；只有前端显式选择的工具才会暴露给规划器。
 - WebFlux 控制器将 JDBC、Tika 和语音阻塞操作调度到 `boundedElastic`；批量文档上传使用临时文件串行解析，避免把整批文件同时聚合到堆内存。
 
 ## 配置
@@ -56,6 +58,8 @@ psql --host <host> --port 5432 --username enterprise_ai_cockpit --dbname enterpr
 - `GET /api/mcp/status`：MCP 客户端配置/工具状态。
 - `GET /api/mcp/weather?city=常州`：真实 MCP 工具调用。
 - `/api/admin/knowledge-bases`、`/api/admin/documents`：知识库和文档管理。
+- `POST /api/admin/retrieval-test`：在指定知识库和 metadata 过滤条件下执行真实融合检索，供 Retrieval Lab 调试召回质量。
+- `POST /api/admin/documents/reindex?knowledgeBaseId=...`：原位重建旧文档 metadata、chunk 与 pgvector，迁移到当前分块策略。
 - `/api/admin/data-sources`、`/api/admin/report-templates`、`/api/admin/report-runs`：数据源与报告管理。
 
 ## 启动示例

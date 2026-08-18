@@ -130,6 +130,8 @@ public class AiChatService {
             metadata.put("knowledgeBaseCount", request.knowledgeBaseIds() == null ? 0 : request.knowledgeBaseIds().size());
             metadata.put("mcpToolIds", request.mcpToolIds() == null ? List.of() : request.mcpToolIds());
             metadata.put("agenticToolPlanning", true);
+            metadata.put("retrievalStrategy", knowledgeBaseService.retrievalStrategy());
+            metadata.put("retrievalQueryRewritten", !context.retrievalQuery().equals(request.message().trim()));
             Flux<StreamEvent> meta = Flux.just(new StreamEvent("meta", json(metadata)));
             Flux<StreamEvent> plan = context.planSummary().isBlank()
                 ? Flux.empty()
@@ -184,28 +186,27 @@ public class AiChatService {
         List<String> selectedToolIds = request.mcpToolIds() == null
             ? List.of()
             : request.mcpToolIds();
-        if (request.enableTools() && selectedToolIds.isEmpty()) {
-            selectedToolIds = List.of("weather");
-        }
+        // Only tools explicitly exposed by the user interface may enter the planner.
         AgentToolOrchestrator.Result orchestration = request.enableTools() && mcpToolService != null
             ? agentToolOrchestrator.execute(request.message(), selectedToolIds, model)
             : new AgentToolOrchestrator.Result("", List.of());
         List<McpExecutionResult> toolResults = orchestration.toolResults();
+        List<ConversationMessage> history = repository.findChatMessages(
+            conversationId,
+            8
+        );
+        String retrievalQuery = contextualizeRetrievalQuery(request.message(), history);
         List<RetrievedKnowledgeChunk> references = isStandaloneWeatherQuestion(
             request.message(),
             toolResults
         )
             ? List.of()
             : knowledgeBaseService.search(
-                request.message(),
+                retrievalQuery,
                 request.knowledgeBaseIds(),
                 request.metadataFilter(),
                 topK
             );
-        List<ConversationMessage> history = repository.findChatMessages(
-            conversationId,
-            8
-        );
         String modelQuestion = buildQuestion(
             history,
             request.message(),
@@ -218,8 +219,28 @@ public class AiChatService {
             references,
             modelQuestion,
             toolResults,
-            orchestration.summary()
+            orchestration.summary(),
+            retrievalQuery
         );
+    }
+
+    private String contextualizeRetrievalQuery(String question, List<ConversationMessage> history) {
+        String current = question == null ? "" : question.trim();
+        if (current.isBlank() || history == null || history.isEmpty()) return current;
+        String lower = current.toLowerCase();
+        boolean referential = containsAny(
+            lower,
+            "刚才", "这个", "那个", "上述", "前面", "它", "他们", "其", "该规则", "适用于谁", "呢？", "呢?",
+            "that rule", "the above", "it ", "those", "what about", "who does this"
+        );
+        if (!referential) return current;
+        for (int index = history.size() - 1; index >= 0; index--) {
+            ConversationMessage message = history.get(index);
+            if ("user".equals(message.role()) && message.content() != null && !message.content().isBlank()) {
+                return message.content().trim() + "\n后续问题：" + current;
+            }
+        }
+        return current;
     }
 
     private String buildQuestion(
@@ -306,6 +327,7 @@ public class AiChatService {
         List<RetrievedKnowledgeChunk> references,
         String modelQuestion,
         List<McpExecutionResult> toolResults,
-        String planSummary
+        String planSummary,
+        String retrievalQuery
     ) {}
 }

@@ -71,7 +71,7 @@ public class PostgresVectorIndexService implements VectorIndexService {
 
     @Override
     public List<RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, int topK) {
-        int limit = Math.min(20, Math.max(1, topK));
+        int limit = Math.min(80, Math.max(1, topK));
         float[] embedding = embeddingService.embed(query);
         StringBuilder sql = new StringBuilder("""
             SELECT chunk_id, document_id, knowledge_base_id, title, content, metadata,

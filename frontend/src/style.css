@@ -1746,6 +1746,124 @@ i.warn {
   white-space: nowrap;
 }
 
+.retrieval-lab {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 15px;
+  background: linear-gradient(145deg, rgba(246, 248, 255, 0.92), rgba(239, 247, 247, 0.78));
+  border: 1px solid rgba(83, 104, 242, 0.1);
+  border-radius: 16px;
+}
+
+.retrieval-lab-heading {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.retrieval-lab-heading h3 {
+  margin: 4px 0 0;
+  color: #354055;
+  font-size: 12px;
+}
+
+.retrieval-lab-heading p {
+  margin: 4px 0 0;
+  color: #8993a6;
+  font-size: 8px;
+}
+
+.retrieval-lab-actions {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.retrieval-lab-actions .el-button {
+  height: auto;
+  padding: 3px 6px;
+  font-size: 8px;
+}
+
+.strategy-chip {
+  max-width: 54%;
+  padding: 5px 8px;
+  overflow: hidden;
+  color: #5969cb;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(83, 104, 242, 0.1);
+  border-radius: 999px;
+}
+
+.retrieval-query-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+}
+
+.retrieval-hit-list {
+  display: grid;
+  gap: 5px;
+}
+
+.retrieval-hit-list button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 9px;
+  text-align: left;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(43, 57, 91, 0.06);
+  border-radius: 11px;
+}
+
+.retrieval-hit-list button:hover {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(83, 104, 242, 0.16);
+}
+
+.retrieval-hit-list strong,
+.retrieval-hit-list small {
+  display: block;
+}
+
+.retrieval-hit-list strong {
+  color: #465166;
+  font-size: 9px;
+}
+
+.retrieval-hit-list small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #8d97a8;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retrieval-hit-list em {
+  color: #6070d5;
+  font-size: 8px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.retrieval-empty {
+  padding: 11px;
+  color: #8d97a8;
+  font-size: 8px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.48);
+  border-radius: 10px;
+}
+
 .document-heading {
   display: flex;
   align-items: center;
@@ -2610,6 +2728,22 @@ i.warn {
 
   .kb-stat-row > div:nth-child(2) {
     border-right: 0;
+  }
+
+  .retrieval-lab-heading {
+    display: grid;
+  }
+
+  .retrieval-lab-actions {
+    justify-items: start;
+  }
+
+  .strategy-chip {
+    max-width: 100%;
+  }
+
+  .retrieval-query-row {
+    grid-template-columns: 1fr;
   }
 
   .settings-card.infrastructure-card {

@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class EnterpriseCockpitServiceTest {
@@ -38,6 +39,51 @@ class EnterpriseCockpitServiceTest {
         assertThat(salesHits.get(0).title()).isEqualTo("monthly-sales.md");
         assertThat(salesHits.get(0).metadata()).containsEntry("region", "east");
         assertThat(knowledgeBaseService.list().get(0).businessType()).isEqualTo("通用业务");
+    }
+
+    @Test
+    void hybridRetrievalPrioritizesExactBusinessIdentifiers() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        long kbId = knowledgeBaseService.createKnowledgeBase(new KnowledgeBaseRequest("Contract KB", "", "CONTRACT"));
+        knowledgeBaseService.importDocument(
+            kbId,
+            "general-policy.md",
+            "合同审批应完成法务复核并登记责任人。",
+            Map.of("version", "1.0")
+        );
+        knowledgeBaseService.importDocument(
+            kbId,
+            "contract-CN-2026-0818.md",
+            "合同 CN-2026-0818 的付款条件为验收后十五日内付款。",
+            Map.of("version", "2.0")
+        );
+        TrackingVectorIndex vectorIndex = new TrackingVectorIndex();
+        List<com.example.aiagent.model.RetrievedKnowledgeChunk> stored = repository.findAllChunks();
+        vectorIndex.results = List.of(stored.get(0), stored.get(1));
+        knowledgeBaseService.setVectorIndexService(vectorIndex);
+
+        var hits = knowledgeBaseService.search("CN-2026-0818 付款条件", List.of(kbId), Map.of(), 5);
+
+        assertThat(hits).isNotEmpty();
+        assertThat(hits.get(0).title()).isEqualTo("contract-CN-2026-0818.md");
+        assertThat(vectorIndex.lastQuery).isEqualTo("CN-2026-0818 付款条件");
+    }
+
+    @Test
+    void retrievalExcludesInactiveExpiredAndSupersededDocumentsByDefault() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        long kbId = knowledgeBaseService.createKnowledgeBase(new KnowledgeBaseRequest("Policy KB", "", "POLICY"));
+        knowledgeBaseService.importDocument(kbId, "active.md", "报销上限为 3000 元。", Map.of("status", "active"));
+        knowledgeBaseService.importDocument(kbId, "draft.md", "报销上限为 8000 元。", Map.of("status", "draft"));
+        knowledgeBaseService.importDocument(kbId, "expired.md", "报销上限为 5000 元。", Map.of("effectiveTo", "2020-01-01"));
+        knowledgeBaseService.importDocument(kbId, "old.md", "报销上限为 4000 元。", Map.of("supersededBy", "active.md"));
+
+        var hits = knowledgeBaseService.search("报销上限", List.of(kbId), Map.of(), 10);
+
+        assertThat(hits).extracting(com.example.aiagent.model.RetrievedKnowledgeChunk::title)
+            .containsExactly("active.md");
     }
 
     @Test
@@ -96,6 +142,8 @@ class EnterpriseCockpitServiceTest {
     void chatUsesSelectedModelAndRecentConversationHistory() {
         InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
         KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        TrackingVectorIndex vectorIndex = new TrackingVectorIndex();
+        knowledgeBaseService.setVectorIndexService(vectorIndex);
         CapturingModelGateway gateway = new CapturingModelGateway();
         AiChatService chatService = new AiChatService(
             repository,
@@ -140,6 +188,66 @@ class EnterpriseCockpitServiceTest {
             .contains("退款期限是什么？")
             .contains("当前问题")
             .contains("刚才的规则适用于谁？");
+        assertThat(vectorIndex.lastQuery)
+            .contains("退款期限是什么？")
+            .contains("后续问题：刚才的规则适用于谁？");
+    }
+
+    @Test
+    void reindexesLegacyDocumentsWithCurrentProvenanceAndVectorLifecycle() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        TrackingVectorIndex vectorIndex = new TrackingVectorIndex();
+        knowledgeBaseService.setVectorIndexService(vectorIndex);
+        long kbId = knowledgeBaseService.createKnowledgeBase(new KnowledgeBaseRequest("Legacy KB", "", "LEGACY"));
+        var legacy = repository.saveDocument(
+            kbId,
+            "legacy-policy.md",
+            "# 审批规则\n\n所有付款申请必须记录合同编号和复核人。",
+            Map.of("category", "policy"),
+            List.of("legacy fixed window")
+        );
+        long oldChunkId = repository.findChunksByDocumentId(legacy.id()).get(0).id();
+
+        var summary = knowledgeBaseService.reindexDocuments(kbId);
+        var updated = knowledgeBaseService.getDocument(legacy.id());
+        var chunks = repository.findChunksByDocumentId(legacy.id());
+
+        assertThat(summary.documents()).isEqualTo(1);
+        assertThat(summary.chunkStrategy()).isEqualTo("structure-aware-v2");
+        assertThat(updated.metadata())
+            .containsEntry("chunkStrategy", "structure-aware-v2")
+            .containsKeys("source", "contentHash", "ingestedAt", "parser");
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.get(0).content()).contains("章节：审批规则");
+        assertThat(vectorIndex.deleted).containsExactly(oldChunkId);
+        assertThat(vectorIndex.upserted).extracting(com.example.aiagent.model.RetrievedKnowledgeChunk::id)
+            .containsExactly(chunks.get(0).id());
+    }
+
+    @Test
+    void enablingToolsWithoutSelectingAnyDoesNotExposeMcpCapabilities() {
+        InMemoryEnterpriseRepository repository = new InMemoryEnterpriseRepository(objectMapper);
+        KnowledgeBaseService knowledgeBaseService = new KnowledgeBaseService(repository, objectMapper);
+        CapturingModelGateway gateway = new CapturingModelGateway();
+        McpToolService mcp = mock(McpToolService.class);
+        AiChatService chatService = new AiChatService(
+            repository,
+            knowledgeBaseService,
+            gateway,
+            new ChatModelCatalog(new com.example.aiagent.config.LlmProperties(
+                true, "openai-compatible", "https://example.test", "test-key", ChatModelCatalog.FLASH
+            )),
+            objectMapper,
+            mcp
+        );
+
+        var events = chatService.stream(new ChatStreamRequest(
+            null, "今天气怎么样", ChatModelCatalog.FLASH, List.of(), Map.of(), List.of(), true, false
+        ));
+
+        assertThat(events).extracting("event").doesNotContain("tool", "plan");
+        verifyNoInteractions(mcp);
     }
 
     @Test
@@ -394,11 +502,16 @@ class EnterpriseCockpitServiceTest {
     private static final class TrackingVectorIndex implements VectorIndexService {
         private final List<com.example.aiagent.model.RetrievedKnowledgeChunk> upserted = new ArrayList<>();
         private final List<Long> deleted = new ArrayList<>();
+        private List<com.example.aiagent.model.RetrievedKnowledgeChunk> results = List.of();
+        private String lastQuery;
 
         @Override public boolean enabled() { return true; }
         @Override public void upsert(com.example.aiagent.model.RetrievedKnowledgeChunk chunk) { upserted.add(chunk); }
         @Override public void delete(long chunkId) { deleted.add(chunkId); }
-        @Override public List<com.example.aiagent.model.RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, int topK) { return List.of(); }
+        @Override public List<com.example.aiagent.model.RetrievedKnowledgeChunk> search(String query, List<Long> knowledgeBaseIds, int topK) {
+            lastQuery = query;
+            return results.stream().limit(topK).toList();
+        }
         @Override public String status() { return "test"; }
     }
 

@@ -90,6 +90,32 @@ public class AdminController {
     @PatchMapping("/admin/documents/{id}/metadata") public Mono<Void> updateMetadata(@PathVariable long id, @RequestBody Map<String, String> metadata) { return runBlocking(() -> knowledgeBaseService.updateMetadata(id, metadata)); }
     @DeleteMapping("/admin/documents/{id}") public Mono<Void> deleteDocument(@PathVariable long id) { return runBlocking(() -> knowledgeBaseService.deleteDocument(id)); }
 
+    @PostMapping("/admin/documents/reindex")
+    public Mono<KnowledgeBaseService.ReindexSummary> reindexDocuments(
+        @RequestParam(required = false) Long knowledgeBaseId
+    ) {
+        return fromBlocking(() -> knowledgeBaseService.reindexDocuments(knowledgeBaseId));
+    }
+
+    @PostMapping("/admin/retrieval-test")
+    public Mono<RetrievalTestResponse> retrievalTest(@Valid @RequestBody RetrievalTestRequest request) {
+        return fromBlocking(() -> {
+            int topK = request.topK() == null ? 8 : request.topK();
+            List<RetrievedKnowledgeChunk> hits = knowledgeBaseService.search(
+                request.query(),
+                request.knowledgeBaseIds(),
+                request.metadataFilter(),
+                topK
+            );
+            return new RetrievalTestResponse(
+                request.query(),
+                knowledgeBaseService.retrievalStrategy(),
+                hits.size(),
+                hits
+            );
+        });
+    }
+
     @GetMapping("/admin/data-sources") public Mono<List<DataSourceResponse>> dataSources() { return fromBlocking(dataSourceService::list); }
     @PostMapping("/admin/data-sources") public Mono<DataSourceResponse> createDataSource(@Valid @RequestBody DataSourceRequest request) { return fromBlocking(() -> dataSourceService.create(request)); }
     @PostMapping("/admin/data-sources/{id}/test") public Mono<Map<String, Object>> testDataSource(@PathVariable long id) { return fromBlocking(() -> dataSourceService.test(id)); }
