@@ -2,6 +2,8 @@
 
 2026-10-03。该业务域直接在本项目现有 Spring Boot 进程运行，无独立后台服务。
 
+> 本文为一期兼容接口说明。当前数据库、角色、AG-UI 与视觉链路见 [停车业务二期说明](parking-operations.md)。旧知识库不覆盖，新知识域为 `smart-parking-agent-v2`。
+
 前端：[三维停车场](https://caibinice.com/smartParking/)、[手机版](https://caibinice.com/smartParking/mobile)。
 完整业务与 GitHub 调研：[停车项目设计文档](https://github.com/caibinice/3dSmartParking/blob/main/docs/parking-agent-design.md)。
 

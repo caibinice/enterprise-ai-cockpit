@@ -3,6 +3,8 @@ spring:
     name: enterprise-ai-cockpit
   main:
     web-application-type: reactive
+  codec:
+    max-in-memory-size: 2MB
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/enterprise_ai_cockpit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
     username: ${MYSQL_USER:enterprise_ai_cockpit}
@@ -61,6 +63,9 @@ server:
   forward-headers-strategy: native
 
 app:
+  parking:
+    enabled: ${PARKING_OPERATIONS_ENABLED:false}
+    vision-model: ${PARKING_VISION_MODEL:deepseek-flash}
   action-auth:
     password: ${ACTION_PASSWORD:}
     token-secret: ${ACTION_TOKEN_SECRET:}

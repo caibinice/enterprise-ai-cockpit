@@ -33,7 +33,9 @@ public class ActionAuthWebFilter implements WebFilter {
         String path = exchange.getRequest().getPath().value();
         HttpMethod method = exchange.getRequest().getMethod();
         boolean sensitive = SENSITIVE_METHODS.contains(method)
-            && !path.equals("/api/action-auth/verify");
+            && !path.equals("/api/action-auth/verify")
+            // Parking v2 endpoints enforce their own signed role principal, including all GETs.
+            && !path.startsWith("/api/parking/");
         if (!sensitive) {
             return chain.filter(exchange);
         }

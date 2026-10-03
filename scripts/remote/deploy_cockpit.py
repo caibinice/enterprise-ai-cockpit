@@ -164,6 +164,8 @@ def environment(
         "LLM_MODEL": "deepseek-v4-flash",
         "LLM_THINKING_ENABLED": "true",
         "LLM_REASONING_EFFORT": "max",
+        "PARKING_OPERATIONS_ENABLED": "true",
+        "PARKING_VISION_MODEL": "deepseek-flash",
         "VECTOR_ENABLED": "true",
         "VECTOR_DATABASE_URL": (
             "jdbc:postgresql://127.0.0.1:"
@@ -235,6 +237,24 @@ root=/opt/enterprise-ai-cockpit
 release={release}
 archive={remote_archive}
 previous="$(readlink -f "$root/current" 2>/dev/null || true)"
+backup="$root/backups/release-$release"
+mkdir -p "$backup"
+chmod 700 "$backup"
+test ! -f "$root/shared/app.env" || cp -p "$root/shared/app.env" "$backup/app.env"
+test ! -f /etc/systemd/system/enterprise-ai-cockpit.service || cp -p /etc/systemd/system/enterprise-ai-cockpit.service "$backup/service"
+rollback() {{
+  test ! -f "$backup/app.env" || cp -p "$backup/app.env" "$root/shared/app.env"
+  test ! -f "$backup/service" || cp -p "$backup/service" /etc/systemd/system/enterprise-ai-cockpit.service
+  if [[ -n "$previous" && -d "$previous" ]]; then
+    ln -sfn "$previous" "$root/current.next"
+    mv -Tf "$root/current.next" "$root/current"
+    ln -sfn "$previous/dist" "$root/www/smartCockpit.next"
+    mv -Tf "$root/www/smartCockpit.next" "$root/www/smartCockpit"
+    systemctl daemon-reload
+    systemctl restart enterprise-ai-cockpit.service || true
+  fi
+}}
+trap rollback ERR
 before_nginx="$(systemctl is-active nginx || true)"
 before_quant="$(systemctl is-active ai-quant-api || true)"
 before_cross="$(systemctl is-active crossborder-trend || true)"
@@ -276,13 +296,8 @@ for _attempt in $(seq 1 75); do
 done
 
 if [[ "$healthy" != true ]]; then
-  if [[ -n "$previous" && -d "$previous" ]]; then
-    ln -sfn "$previous" "$root/current.next"
-    mv -Tf "$root/current.next" "$root/current"
-    ln -sfn "$previous/dist" "$root/www/smartCockpit.next"
-    mv -Tf "$root/www/smartCockpit.next" "$root/www/smartCockpit"
-    systemctl restart enterprise-ai-cockpit.service || true
-  fi
+  rollback
+  trap - ERR
   journalctl -u enterprise-ai-cockpit.service -n 80 --no-pager
   exit 1
 fi
@@ -300,6 +315,7 @@ test "$before_cross" = "$after_cross"
 test "$before_nginx_pid" = "$after_nginx_pid"
 test "$before_quant_pid" = "$after_quant_pid"
 test "$before_cross_pid" = "$after_cross_pid"
+trap - ERR
 
 find "$root/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' \
   | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf
