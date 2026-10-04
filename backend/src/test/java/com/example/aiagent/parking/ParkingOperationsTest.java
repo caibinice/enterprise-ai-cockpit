@@ -53,16 +53,16 @@ class ParkingOperationsTest {
         var result=data.period(manager,"yearly");assertThat((Map<String,Object>)result.get("ledger")).containsEntry("paid_cents",1000L);
         assertThat((List<?>)result.get("occupancy")).hasSize(3);assertThatThrownBy(()->data.analytics(manager,LocalDate.of(2020,1,1),LocalDate.of(2026,10,2),null)).hasMessageContaining("范围");
     }
-    @Test void nightlyReportsAreDatabaseOnlyAndKnowledgeV2AddsEightIsolatedGuides()throws Exception{
+    @Test void nightlyReportsAreDatabaseOnlyAndKnowledgeV2HasIsolatedGuides()throws Exception{
         var reports=new ParkingReportSchedule(jdbc,data,json);reports.refresh();reports.refresh();assertThat(reports.status()).hasSize(4);
         assertThat(jdbc.queryForObject("SELECT content_json FROM parking_report_cache WHERE period='yearly'",String.class)).contains("paid_cents\":1000");
         var knowledge=new KnowledgeBaseService(new InMemoryEnterpriseRepository(json),json);
         knowledge.createKnowledgeBase(new KnowledgeBaseRequest("既有手工知识","保留","smart-parking-agent-v1"));
-        var docs=new ParkingKnowledgeService(knowledge,json);assertThat(docs.bootstrap()).containsEntry("documents",13).containsEntry("imported",13);
+        var docs=new ParkingKnowledgeService(knowledge,json);assertThat(docs.bootstrap()).containsEntry("documents",14).containsEntry("imported",14);
         assertThat(docs.bootstrap()).containsEntry("imported",0);assertThat(knowledge.list()).hasSize(2);
     }
     @Test void graphFindsDeterministicRoutesAndRejectsInvalidCoordinates(){
-        var route=navigation.route("entrance","emergency");assertThat((List<?>)route.get("points")).hasSize(5);assertThat(((Number)route.get("meters")).longValue()).isPositive();
+        var route=navigation.route("entrance","emergency");assertThat((List<?>)route.get("points")).hasSize(7);assertThat(((Number)route.get("meters")).longValue()).isPositive();
         var g=navigation.graph();var bad=new ArrayList<>(g.nodes());bad.add(new ParkingNavigationService.Node("bad","bad","destination",null,Double.NaN,0,true,false,false));
         assertThatThrownBy(()->ParkingNavigationService.validate(new ParkingNavigationService.Graph(1,bad,g.edges()))).hasMessageContaining("坐标");
         var closed=g.edges().stream().map(e->new ParkingNavigationService.Edge(e.from(),e.to(),true)).toList();assertThatThrownBy(()->ParkingNavigationService.route(new ParkingNavigationService.Graph(1,g.nodes(),closed),"entrance","emergency")).hasMessageContaining("没有可通行路径");
@@ -70,6 +70,13 @@ class ParkingOperationsTest {
     @Test void recommendationsRespectChargingAndEmergencyReserve(){
         var recommendation=navigation.recommend(visitor,"inpatient","charging");var candidates=(List<Map<String,Object>>)recommendation.get("candidates");assertThat(candidates).hasSize(1);assertThat(candidates.get(0).get("zone")).isEqualTo("B");
         var emergency=navigation.recommend(visitor,"emergency","emergency");assertThat((List<Map<String,Object>>)emergency.get("candidates")).allMatch(c->c.get("zone").equals("C"));
+    }
+    @Test void calibratedZonesAndBothCAreasHaveConnectedRoutes(){
+        var g=navigation.graph();var b=g.nodes().stream().filter(n->n.id().equals("parking-b")).findFirst().orElseThrow();
+        var c=g.nodes().stream().filter(n->n.id().equals("parking-c")).findFirst().orElseThrow();
+        assertThat(b.x()).isNegative();assertThat(b.z()).isNegative();assertThat(c.x()).isPositive();assertThat(c.z()).isGreaterThan(2);
+        assertThat(((Number)navigation.route("entrance","parking-c-side").get("meters")).longValue()).isPositive();
+        assertThat(navigation.tours().get("operations")).contains("parking-c","parking-c-side");
     }
     @Test void workordersRequireConfirmationReviewAndOptimisticVersion(){
         assertThatThrownBy(()->data.createWorkorder(security,1,"核验","request-0010",false)).hasMessageContaining("确认");

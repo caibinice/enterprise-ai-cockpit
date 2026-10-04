@@ -54,6 +54,7 @@ database/mysql/                  MySQL/MariaDB 建表 SQL
 database/postgresql/             pgvector 建表 SQL
 frontend/                        Vue 3 管理驾驶舱
 scripts/remote/deploy_cockpit.py 仅发布座舱的原子远端部署
+scripts/remote/deploy_backend.py 保留现有前端/环境/单元的纯后端原子发布
 scripts/deploy.ps1                独立测试、构建与部署入口
 scripts/github-push.ps1           独立 token + 20808 代理提交入口
 scripts/seed-demo-data.ps1       幂等测试知识库与文档

@@ -49,7 +49,9 @@ Flyway V3 使用增量 `CREATE TABLE IF NOT EXISTS`。生成脚本保留源哈�
 
 ## 图、推荐与协议
 
-图包含 14 个稳定节点，Dijkstra 排除关闭节点/边。距离按 20 米/模型单位估算。推荐过滤无空位、关闭与不连通分区，再考虑步行距离、充电能力、无障碍条件与急诊 C 区预留，返回解释与路线。配置不是实地测绘。
+图包含 17 个稳定节点，Dijkstra 排除关闭节点/边。距离按 20 米/模型单位估算。推荐过滤无空位、关闭与不连通分区，再考虑步行距离、充电能力、无障碍条件与急诊 C 区预留，返回解释与路线。配置不是实地测绘。
+
+版本 2 坐标与三维前端的 `campus-layout.json` 同源：B 区 `(-8,-2)` 为俯视图右下停车区，C 区主点 `(10.8,5.2)` 在左上，辅助点 `(10.2,-1.9)` 在左侧。辅助点 ID 为 `parking-c-side`、类型 `service`，与主点共用 C 区容量，不额外累计 80 个泊位。老节点 ID 保持稳定，新增左侧道路连接点。新库首次初始化读取资源文件；已有图由管理员备份后带当前版本显式 `PUT /graph`，应用启动不自动覆盖人工维护的图。
 
 AG-UI 按 [1.0 schema](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/spec/1.0/schema.mdx) 输出运行、消息、工具、状态事件。`CUSTOM parking.*` 承载业务报告、路线、草稿和引用。前端使用 `@ag-ui/core` 官方 schema，再检查白名单、目标、调用顺序、最大四个动作与重复 ID。适配器覆盖本服务产生的事件子集，并非宣称渲染全部协议事件。
 
@@ -57,7 +59,7 @@ AG-UI 按 [1.0 schema](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sp
 
 ## 知识、语音、视觉与谷时任务
 
-二期知识域 `smart-parking-agent-v2`，13 篇指南为原 5 篇适配版加 8 篇新指南：公开数据、角色、POI/路径、联合推荐、工单、账本、语音视觉、协议评测。按标题幂等导入，不覆盖人工编辑，不退回全库检索；旧 v1 留作回滚。
+二期知识域 `smart-parking-agent-v2`，14 篇指南为原 5 篇适配版加 9 篇新指南：公开数据、角色、POI/路径、联合推荐、工单、账本、语音视觉、协议评测，以及区域空间定位与镜头操作。按标题幂等导入，不覆盖人工编辑，不退回全库检索；旧 v1 留作回滚。
 
 语音在前端使用浏览器识别/播报，连续会话支持显式唤醒打断与回声过滤、旧规划取消；没有新增 LiveKit/ASR 常驻服务。实际识别率由浏览器、麦克风和网络决定，自动测试覆盖状态机，不把虚拟输入当真人声学测评。
 
@@ -68,6 +70,10 @@ AG-UI 按 [1.0 schema](https://github.com/ag-ui-protocol/ag-ui/blob/main/docs/sp
 ## 发布、初始化与回归
 
 开启 `PARKING_OPERATIONS_ENABLED=true`，图像模型 `PARKING_VISION_MODEL=deepseek-flash`，其余使用原数据库/模型配置。部署脚本已生成这两个环境项。顺序：后端完整测试/打包与 Vue 构建 → 原座舱发布 → 停车 Angular 发布/Nginx 更新 → 博客发布。
+
+纯后端增量可使用 `scripts/remote/deploy_backend.py`：上传新 jar、校验 SHA-256、复制当前 release 的 Vue/MCP 内容、原子切换后只重启座舱。保留并校验现有 app.env/systemd 单元及其他业务服务 PID；旧 release 和服务器私有配置备份可回退。此入口不生成或修改环境项，首次部署仍用完整发布流程。
+
+区域校准使用 `scripts/remote/sync_parking_layout.py --backup E:/Documents/AI/codex/backups/TASK/campus-graph.json` 只读预览；审阅后加 `--apply --expected-version CURRENT_VERSION --setup`，备份原图、保留稳定节点的关闭/服务属性、带版本更新并幂等补齐知识。额外自定义节点或被移除的关闭道路需要先人工合并，脚本不直接覆盖。
 
 ```powershell
 & $Python scripts/remote/provision_parking_operations.py --accounts-file E:/Documents/AI/codex/backups/parking-operations-20261003/parking-accounts.json
