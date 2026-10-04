@@ -69,7 +69,7 @@ def evaluate(base,accounts,llm=False,workflow=False):
     check('visitor knowledge-only answer',lambda:stream('充电与无障碍车位怎么推荐？','visitor'))
     if llm:
         check('Flash plans scene and annual report',lambda:stream('请先展示急诊楼入口，然后让我查看全年的收费账本。','operator'))
-        check('Flash grounds multi-criteria recommendation',lambda:stream('我要去住院楼，汽车需要充电，帮我选合适停车区并显示道路。','security'))
+        check('Business query grounds charging recommendation without model wait',lambda:stream('我要去住院楼，汽车需要充电，帮我选合适停车区并显示道路。','security'))
     if workflow:
         def workorder():
             snapshot=request('/snapshot','security')[1];alert=next(a for a in snapshot['alerts'] if a['status']=='open');key=str(uuid.uuid4());body={'alertId':alert['id'],'requestKey':key,'note':'自动回归：合成告警核验，不代表现场处置','confirmed':True}

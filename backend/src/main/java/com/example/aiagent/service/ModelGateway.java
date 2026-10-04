@@ -2,6 +2,7 @@ package com.example.aiagent.service;
 
 import com.example.aiagent.model.RetrievedKnowledgeChunk;
 import java.util.List;
+import java.time.Duration;
 import reactor.core.publisher.Flux;
 
 public interface ModelGateway {
@@ -36,6 +37,10 @@ public interface ModelGateway {
         int maxTokens
     ) {
         return answer(systemPrompt + "\n\n" + userPrompt, List.of(), model);
+    }
+    /** Optional total deadline for interactive planners; existing gateways remain source compatible. */
+    default String jsonAnswer(String systemPrompt, String userPrompt, String model, int maxTokens, Duration budget) {
+        return jsonAnswer(systemPrompt, userPrompt, model, maxTokens);
     }
     String chart(String question, List<RetrievedKnowledgeChunk> references);
 }

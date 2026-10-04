@@ -58,7 +58,7 @@ class ParkingOperationsTest {
         assertThat(jdbc.queryForObject("SELECT content_json FROM parking_report_cache WHERE period='yearly'",String.class)).contains("paid_cents\":1000");
         var knowledge=new KnowledgeBaseService(new InMemoryEnterpriseRepository(json),json);
         knowledge.createKnowledgeBase(new KnowledgeBaseRequest("既有手工知识","保留","smart-parking-agent-v1"));
-        var docs=new ParkingKnowledgeService(knowledge,json);assertThat(docs.bootstrap()).containsEntry("documents",14).containsEntry("imported",14);
+        var docs=new ParkingKnowledgeService(knowledge,json);assertThat(docs.bootstrap()).containsEntry("documents",22).containsEntry("imported",22);
         assertThat(docs.bootstrap()).containsEntry("imported",0);assertThat(knowledge.list()).hasSize(2);
     }
     @Test void graphFindsDeterministicRoutesAndRejectsInvalidCoordinates(){
@@ -94,6 +94,42 @@ class ParkingOperationsTest {
         var events=workflow.stream(manager,input).collectList().block(Duration.ofSeconds(5));assertThat(events.get(0).get("type")).isEqualTo("RUN_STARTED");assertThat(events.get(events.size()-1).get("type")).isEqualTo("RUN_FINISHED");
         assertThat(events).anyMatch(e->e.get("type").equals("TOOL_CALL_ARGS")&&e.get("delta").equals("{\"target\":\"yearly\"}"));
         assertThatThrownBy(()->ParkingWorkflowService.parsePlan(json.readTree("[{\"type\":\"report.show\",\"target\":\"yearly\"}]"),workflow.tools(visitor))).hasMessageContaining("权限");
+    }
+    @Test void naturalRecommendationsAndFollowupsUseDestinationRatherThanWaitingForModel(){
+        var input=new ParkingWorkflowService.RunInput("thread2","run2",List.of(json.valueToTree(Map.of("role","user","content","推荐去门诊的车位")),json.valueToTree(Map.of("role","assistant","content","门诊推荐")),json.valueToTree(Map.of("role","user","content","那住院楼呢"))),json.valueToTree(Map.of("destination","outpatient","preference","charging")),List.of(),List.of(),null);
+        var events=workflow.stream(visitor,input).collectList().block(Duration.ofSeconds(5));
+        var report=events.stream().filter(e->"parking.report".equals(e.get("name"))).findFirst().orElseThrow();
+        var recommendation=(Map<String,Object>)((Map<?,?>)report.get("value")).get("data");
+        assertThat(recommendation).containsEntry("destination","inpatient").containsEntry("preference","charging");
+        assertThat(events).anyMatch(e->"parking.plan".equals(e.get("name"))&&((Map<?,?>)e.get("value")).get("provider").equals("deterministic-business"));
+        assertThat(events.get(events.size()-1).get("type")).isEqualTo("RUN_FINISHED");
+        var withRoute=new ParkingWorkflowService.RunInput("thread5","run5",List.of(json.valueToTree(Map.of("role","user","content","我要去住院楼，帮我推荐充电车位并显示道路"))),json.createObjectNode(),List.of(),List.of(),null);
+        assertThat(workflow.stream(visitor,withRoute).collectList().block(Duration.ofSeconds(5)))
+            .anyMatch(e->"parking.route".equals(e.get("name"))&&((Map<?,?>)e.get("value")).get("to").equals("inpatient"));
+    }
+    @Test void naturalEntranceNavigationAndRouteEndAreControlledActions(){
+        var input=new ParkingWorkflowService.RunInput("thread3","run3",List.of(json.valueToTree(Map.of("role","user","content","从大门导航到门诊楼入口"))),json.createObjectNode(),List.of(),List.of(),null);
+        var events=workflow.stream(visitor,input).collectList().block(Duration.ofSeconds(5));
+        assertThat(events).anyMatch(e->"parking.route".equals(e.get("name"))&&((Map<?,?>)e.get("value")).get("to").equals("outpatient"));
+        assertThat(ParkingWorkflowService.routeSource("从B区到住院楼怎么走")).isEqualTo("parking-b");
+        assertThat(ParkingWorkflowService.destinationInText("从大门到住院楼入口")).isEqualTo("inpatient");
+        assertThat(ParkingWorkflowService.shortcut("结束导航",workflow.tools(visitor))).extracting(ParkingAgentService.Action::type).containsExactly("route.clear","tour.stop");
+    }
+    @Test void hospitalGuidesAreScopedCitedAndNeverExposeSourceHospitalIdentity()throws Exception{
+        var knowledge=new KnowledgeBaseService(new InMemoryEnterpriseRepository(json),json);new ParkingKnowledgeService(knowledge,json).bootstrap();
+        var guide=new ParkingHospitalService(json);
+        assertThat(guide.answer("心内科的病房在哪").text()).contains("内科一病区","住院楼3层","虚构");
+        assertThat(guide.destination("心内科护士站怎么走")).isEqualTo("inpatient");
+        assertThat(guide.answer("骨科怎么挂号").text()).contains("骨伤科","示例医师庚","模拟排班");
+        assertThat(guide.answer("怎么退号").title()).contains("变更退号");
+        var docs=knowledge.listDocuments(null).stream().filter(d->"hospital".equals(d.metadata().get("topic"))).toList();
+        assertThat(docs).hasSize(8);assertThat(docs).allSatisfy(d->{assertThat(d.metadata()).containsEntry("sourceType","anonymized-demo");assertThat(d.content()).doesNotContain("常州市中医医院","和平北路","898969","张志坚","真实余号100");});
+        var model=mock(ModelGateway.class);var hospitalWorkflow=new ParkingWorkflowService(data,navigation,access,model,new ChatModelCatalog(new LlmProperties(false,"mock","","",ChatModelCatalog.FLASH)),knowledge,json);
+        var input=new ParkingWorkflowService.RunInput("thread4","run4",List.of(json.valueToTree(Map.of("role","user","content","医院怎么预约挂号"))),json.createObjectNode(),List.of(),List.of(),null);
+        var events=hospitalWorkflow.stream(visitor,input).collectList().block(Duration.ofSeconds(5));
+        assertThat(events).anyMatch(e->"TEXT_MESSAGE_CONTENT".equals(e.get("type"))&&e.get("delta").toString().contains("示范挂号流程"));
+        assertThat(events).anyMatch(e->"parking.references".equals(e.get("name"))&&!((List<?>)e.get("value")).isEmpty());
+        verifyNoInteractions(model);
     }
     @Test void allOperationsGetEndpointsRequireRoleSession(){
         var vision=mock(ParkingVisionService.class);var controller=new ParkingOperationsController(access,data,navigation,workflow,vision,mock(ParkingKnowledgeService.class),mock(ParkingReportSchedule.class));

@@ -215,6 +215,8 @@ Remove-Item Env:ACTION_PASSWORD
 
 ## 仍需优化
 
+三维停车院内助手现支持常州当前天气 MCP、18 个脱敏科室、示范病区/挂号指南、自然语言推荐与导航；常见查询优先走受控业务数据，复杂规划使用独立等待预算。见 [停车院内服务工作流](docs/parking-hospital-assistant.md)。
+
 已完成项、遗留风险和建议优先级见
 [`docs/project-review-2026-07-30.md`](docs/project-review-2026-07-30.md)。
 

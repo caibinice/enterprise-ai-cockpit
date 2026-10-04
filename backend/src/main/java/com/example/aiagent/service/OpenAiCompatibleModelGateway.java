@@ -138,6 +138,11 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         String model,
         int requestedMaxTokens
     ) {
+        return jsonAnswer(systemPrompt, userPrompt, model, requestedMaxTokens, Duration.ofSeconds(120));
+    }
+
+    @Override
+    public String jsonAnswer(String systemPrompt, String userPrompt, String model, int requestedMaxTokens, Duration budget) {
         String selectedModel = modelCatalog.resolve(model);
         if (!enabled()) {
             return fallback.jsonAnswer(systemPrompt, userPrompt, selectedModel, requestedMaxTokens);
@@ -147,18 +152,30 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
             Map.of("role", "user", "content", userPrompt)
         );
         int outputBudget = Math.max(256, Math.min(requestedMaxTokens, maxTokens(selectedModel)));
+        Duration deadlineBudget = Duration.ofMillis(Math.max(1000, Math.min(120000, budget.toMillis())));
+        long deadline = System.nanoTime() + deadlineBudget.toNanos();
         try {
-            return completeJson(messages, selectedModel, outputBudget, true);
+            return completeJson(messages, selectedModel, outputBudget, true, deadlineBudget);
         } catch (Exception jsonModeError) {
+            if (jsonModeError instanceof InterruptedException) { Thread.currentThread().interrupt(); return ""; }
+            // A network timeout/429/5xx is not evidence that JSON mode is unsupported.
+            // Never double the waiting budget by retrying those errors.
+            if (!(jsonModeError instanceof JsonRequestFailure failure) || !java.util.Set.of(400,422).contains(failure.status)) {
+                log.warn("Structured model request failed for {}: {}", selectedModel, jsonModeError.getClass().getSimpleName());
+                return "";
+            }
+            long remaining = deadline - System.nanoTime();
+            if (remaining < Duration.ofSeconds(1).toNanos()) return "";
             log.info(
                 "Provider rejected JSON response mode for {}; retrying with prompt-only JSON contract: {}",
                 selectedModel,
                 jsonModeError.getMessage()
             );
             try {
-                return completeJson(messages, selectedModel, outputBudget, false);
+                return completeJson(messages, selectedModel, outputBudget, false, Duration.ofNanos(remaining));
             } catch (Exception retryError) {
-                log.warn("Structured model request failed for {}: {}", selectedModel, retryError.getMessage());
+                if (retryError instanceof InterruptedException) Thread.currentThread().interrupt();
+                log.warn("Structured model request failed for {}: {}", selectedModel, retryError.getClass().getSimpleName());
                 return "";
             }
         }
@@ -168,7 +185,8 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         List<Map<String, String>> messages,
         String model,
         int outputBudget,
-        boolean jsonMode
+        boolean jsonMode,
+        Duration timeout
     ) throws Exception {
         Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("model", model);
@@ -179,7 +197,7 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
         String json = objectMapper.writeValueAsString(body);
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(normalizeBaseUrl(properties.baseUrl()) + "/chat/completions"))
-            .timeout(Duration.ofSeconds(120))
+            .timeout(timeout)
             .header("Authorization", "Bearer " + properties.apiKey())
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
@@ -189,7 +207,7 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
         );
         if (response.statusCode() >= 300) {
-            throw new IllegalStateException("HTTP " + response.statusCode());
+            throw new JsonRequestFailure(response.statusCode());
         }
         JsonNode root = objectMapper.readTree(response.body());
         JsonNode choice = root.path("choices").path(0);
@@ -204,6 +222,11 @@ public class OpenAiCompatibleModelGateway implements ModelGateway {
             );
         }
         return content.asText();
+    }
+
+    private static final class JsonRequestFailure extends IllegalStateException {
+        final int status;
+        JsonRequestFailure(int status) { super("HTTP " + status); this.status = status; }
     }
 
     private String buildContext(List<RetrievedKnowledgeChunk> references) {

@@ -22,6 +22,10 @@ public class ParkingKnowledgeService {
         try(var input=new ClassPathResource("parking/knowledge-v2.json").getInputStream()){
             for(var document:json.readTree(input)){String title=document.path("title").asText();if(titles.add(title)){knowledge.importDocument(id,title,document.path("content").asText(),Map.of("domain","smart-parking","source",CODE,"sourceType","business-guide","status","active","version","2"));imported++;}}
         }
+        for(var document:new ParkingHospitalService(json).documents()){
+            String title=document.path("title").asText();
+            if(titles.add(title)){knowledge.importDocument(id,title,document.path("content").asText(),Map.of("domain","smart-parking","topic","hospital","source",CODE,"sourceType","anonymized-demo","status","active","version","2026-10-04"));imported++;}
+        }
         return Map.of("knowledgeBaseId",id,"imported",imported,"documents",knowledge.listDocuments(id).size());
     }
 }
