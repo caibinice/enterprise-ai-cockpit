@@ -33,4 +33,19 @@ pwsh -File scripts/verify-workflow.ps1 -OutputPath .runtime/verification-offline
 pwsh -File scripts/verify-workflow.ps1 -Mode live -FocusOnly -OutputPath .runtime/verification-live.json
 ```
 
-线上部署和运行核对在实际发布后记录，不能用本地通过替代生产检查。订单、退款和月报均是样例数据；当前知识索引不是语义 embedding。
+订单、退款和月报均是样例数据；当前知识索引不是语义 embedding。
+
+## 生产发布后核对
+
+- 已推送功能提交 `50803b7`，已激活 release `20261009111652-50803b7`。
+- 公网入口：`https://caibinice.com/smartCockpit/workflow`。
+- 公网离线八场景 8/8；在线工具 / 多 Agent 2/2（42 / 92 事件，5 / 9 次模型调用）。两组验证并行进行，全部完成。
+- 原聊天 Flash SSE 仍返回 `meta/token/references/done`；真实天气 MCP 返回 Open-Meteo 常州天气，原高德/时间/计算器工具目录保留。
+- 原数据库健康：5 个知识库、44 篇文档、47 个向量分块，MySQL/pgvector 连接正常；未新增数据库迁移。
+- 线上历史链路实际补发：after=3 / Last-Event-ID=8 → seq 9–42 共 34 条。
+- 使用复用 TLS 连接验证真实增量 SSE：第一个事件约 31ms 到达，此时查询运行状态仍为 RUNNING，之后连续收到 seq 1–74，无缺口。冷连接的建立耗时与事件推送耗时分别测量。
+- 生产构建浏览器控制台 0 错误 / 0 警告；已截取实际线上工具循环、三专家协作、节点图和游标 41/92 的订单专家回放。
+- 座舱 MainPID 切换到 837167；Nginx 458001、量化 457945、跨境 328004 保持原 PID。未改 Nginx 配置，未重启其他服务。
+- 工作流 JSON 保存在 `/opt/enterprise-ai-cockpit/shared/workflow/runs`，发布后已确认文件落盘；新 Java 进程、三个 stdio Node 进程共同受原 systemd 内存/任务上限约束。
+
+本次本地验证日志位于 `E:\Documents\AI\codex\tmp\cockpit-workflow-20261009`。本地源码回滚快照是 `E:\Documents\AI\codex\backups\cockpit-workflow-20261009\cockpit-before.zip`；远端上一 release 是 `/opt/enterprise-ai-cockpit/releases/20261004134502-94cf09c-backend`，发布脚本在 `backups/release-20261009111652-50803b7` 保留旧环境与 systemd 单元。
