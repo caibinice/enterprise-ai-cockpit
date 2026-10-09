@@ -2,6 +2,8 @@
 
 ## 如何进入与演示
 
+完整迁移范围、栏目逐项验收和本次补齐见 [Agent Studio 完整迁移复核](workflow-migration-audit.md)。工具循环与多 Agent 是讲解重点，八个场景及知识维护、导览、历史、监控和回放都保留。
+
 线上入口：`https://caibinice.com/smartCockpit/workflow`。左侧主导航选择“智能体工作流”，不需要打开独立 Agent Demo，也没有 iframe 或第二个 Java 后端。
 
 建议先演示“工具调用循环”，再演示“多 Agent 协作”：

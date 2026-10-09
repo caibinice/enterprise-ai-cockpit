@@ -44,3 +44,16 @@ npm run build --prefix frontend
 ```
 
 离线模式仍实际运行 Graph、向量检索、MCP 和 HTTP；在线模式增加真实模型和视觉请求。订单、报表、知识仍是隔离样例，退款仍为试算；回放不重执行业务，人工恢复不是任意节点的原生检查点续跑。
+
+## 发布后结果与回滚位置
+
+- 座舱功能提交 `8855abf`，实际 release `20261009135330-8855abf`。
+- 修改后公网离线 8/8、DeepSeek 在线 8/8，包括实际视觉请求、人工恢复、反馈重检索和三轮超时恢复；在线事件数依次为 26、31、26、42、92、23、42、50。
+- 公网浏览器逐项读取八条完成记录，节点输入、归零/单步/Live 回放和导出均通过；演示知识搜索、六节导览、原有四页导航与四档视口通过，pageerror 为 0。
+- 生产人工等待记录已确认同时显示“停止当前工作流”和“运行当前输入”，本地实际点击停止核对 CANCELLED。
+- 验证后采样：MemoryCurrent 333230080 bytes、TasksCurrent 55、TasksMax 128；Nginx/量化/跨境 MainPID 仍为 458001/457945/328004。
+- 本次配置修改文件为 `deploy/systemd/enterprise-ai-cockpit.service.template`。远端上一版为 `/opt/enterprise-ai-cockpit/releases/20261009111652-50803b7`；旧服务单元与环境备份在 `/opt/enterprise-ai-cockpit/backups/release-20261009135330-8855abf/`。回滚通过旧 release 和该备份恢复，不修改其他服务。
+- 博客功能提交 `f945e87`，release `20261009140143-f945e87`；干净构建 12 项内容测试、类型检查与 SSG 构建通过，工作区全部 63 项测试通过。两篇文章六个语言页面、五张实际座舱截图、指定日期、文章列表与 sitemap 的浏览器检查均通过，无 pageerror，1600/1024/390 无横向溢出。
+- 博客上一版 `/opt/ai-blog/releases/20261003170045-9cdf8f0` 保留用于静态链接回滚；独立发布只 reload Nginx，既有拼豆路由与其他应用保持原样。
+
+生产验收日志为 `production-all-final.json`、`production-live-all.json`、`production-workbench.log`、`production-wait-controls.log`、`blog-published-ui.log` 和 `remote-final.log`，都在上述本地验收目录。博客编辑前快照在 `E:\Documents\AI\codex\backups\blog-agent-publish-20261009\articles-before.zip`。
