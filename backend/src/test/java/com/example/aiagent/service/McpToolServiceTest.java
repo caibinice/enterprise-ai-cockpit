@@ -140,11 +140,11 @@ class McpToolServiceTest {
 
     private McpSchema.ListToolsResult toolList() {
         return new McpSchema.ListToolsResult(
-            List.of(new McpSchema.Tool(
-                "queryWeather",
-                "Query current weather",
-                "{\"type\":\"object\"}"
-            )),
+            List.of(McpSchema.Tool.builder()
+                .name("queryWeather")
+                .description("Query current weather")
+                .inputSchema(new McpSchema.JsonSchema("object", java.util.Map.of(), List.of(), false, null, null))
+                .build()),
             null
         );
     }

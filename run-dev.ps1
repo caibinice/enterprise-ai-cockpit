@@ -106,6 +106,19 @@ if ($null -ne $credentialsFile -and -not $UseMemory) {
   if ($null -ne $action) { Set-DefaultEnv 'ACTION_PASSWORD' $action['password'] }
 }
 
+# Reuse the ignored local signing state used by the production publisher.
+# A process-only override still wins; secrets are never put in launch arguments.
+$localActionAuth = Join-Path $root '.deploy\action-auth.json'
+if (Test-Path -LiteralPath $localActionAuth) {
+  $authState = Get-Content -LiteralPath $localActionAuth -Raw | ConvertFrom-Json
+  Set-DefaultEnv 'ACTION_PASSWORD' $authState.password
+  Set-DefaultEnv 'ACTION_TOKEN_SECRET' $authState.tokenSecret
+} elseif ($env:ACTION_PASSWORD -and -not $env:ACTION_TOKEN_SECRET) {
+  $env:ACTION_TOKEN_SECRET = [Convert]::ToBase64String(
+    [Security.Cryptography.RandomNumberGenerator]::GetBytes(48)
+  )
+}
+
 $flywayEnabled = if ($env:FLYWAY_ENABLED) { $env:FLYWAY_ENABLED } else { 'false' }
 $repositoryMode = if ($UseMemory) { 'memory' } elseif ($env:APP_REPOSITORY_MODE) { $env:APP_REPOSITORY_MODE } elseif ($env:MYSQL_PASSWORD) { 'mysql' } else { 'memory' }
 $vectorEnabled = if ($env:VECTOR_ENABLED) { $env:VECTOR_ENABLED } else { 'false' }

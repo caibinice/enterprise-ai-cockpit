@@ -5,6 +5,13 @@ MySQL/MariaDB 持久化业务数据、PostgreSQL + pgvector 保存向量、
 DeepSeek OpenAI-compatible API 输出真实 SSE、Spring AI MCP Client 调用
 STDIO 工具，以及按业务组织的知识库工作台。
 
+新增原生 **智能体工作流** 页面：`/smartCockpit/workflow`。Spring AI Alibaba
+Graph 在同一 Java 进程内执行客服图、工具调用循环与三个独立专家子图，
+WebFlux SSE 推送真实节点输入输出；支持历史记录、路径筛选、单步/连续回放、
+导出链路、停止执行及人工恢复。八个场景和本地/生产验证方式见
+[工作流模块说明](docs/agent-workflow.md)。该模块的订单、退款、报表和知识均为
+隔离的演示数据，不替换原有 MySQL/pgvector 企业知识库。
+
 生产环境固定在 `/smartCockpit/`，页面和只读接口公开；聊天、语音、
 知识导入、数据源与报告操作由后端签发 30 分钟操作令牌。低内存 Java 17
 发布、SSE 代理与回滚说明见

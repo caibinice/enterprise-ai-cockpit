@@ -4,7 +4,7 @@ spring:
   main:
     web-application-type: reactive
   codec:
-    max-in-memory-size: 2MB
+    max-in-memory-size: 8MB
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/enterprise_ai_cockpit?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
     username: ${MYSQL_USER:enterprise_ai_cockpit}
@@ -63,6 +63,17 @@ server:
   forward-headers-strategy: native
 
 app:
+  workflow:
+    data-dir: ${WORKFLOW_DATA_DIR:../.runtime/workflow}
+    deepseek:
+      api-key: ${WORKFLOW_API_KEY:${OPENAI_API_KEY:${DEEPSEEK_API_KEY:}}}
+      base-url: ${WORKFLOW_BASE_URL:${OPENAI_BASE_URL:https://api.deepseek.com}}
+      model: ${WORKFLOW_MODEL:deepseek-flash}
+      vision-model: ${WORKFLOW_VISION_MODEL:deepseek-flash}
+    mcp:
+      node: ${MCP_NODE_COMMAND:node}
+      script: ${WORKFLOW_MCP_SCRIPT:mcp-servers/workflow-mcp-server.js}
+      http-port: ${WORKFLOW_TOOL_PORT:18083}
   parking:
     enabled: ${PARKING_OPERATIONS_ENABLED:false}
     vision-model: ${PARKING_VISION_MODEL:deepseek-flash}

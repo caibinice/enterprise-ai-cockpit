@@ -71,7 +71,7 @@
         </div>
       </header>
 
-      <main :class="['page-frame', { 'chat-frame': active === 'cockpit' }]">
+      <main :class="['page-frame', { 'chat-frame': active === 'cockpit', 'workflow-frame': active === 'workflow' }]">
         <Transition name="page" mode="out-in">
           <section
             v-if="active === 'cockpit'"
@@ -381,6 +381,7 @@
             </aside>
           </section>
 
+          <WorkflowStudio v-else-if="active === 'workflow'" key="workflow" />
           <section v-else-if="active === 'knowledge'" key="knowledge" class="knowledge-page">
             <div class="knowledge-hero glass-panel">
               <div>
@@ -772,6 +773,7 @@
 <script setup lang="ts">
 import {
   computed,
+  defineAsyncComponent,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -818,6 +820,7 @@ import {
 } from '@element-plus/icons-vue';
 import ActionAuthDialog from './components/ActionAuthDialog.vue';
 import ChartView from './components/ChartView.vue';
+const WorkflowStudio = defineAsyncComponent(() => import('./workflow/WorkflowStudio.vue'));
 import { setActionTokenRequester } from './actionAuth';
 import { api, streamChat } from './api';
 
@@ -834,7 +837,7 @@ useEcharts([
   CanvasRenderer,
 ]);
 
-type Section = 'cockpit' | 'knowledge' | 'reports' | 'settings';
+type Section = 'cockpit' | 'workflow' | 'knowledge' | 'reports' | 'settings';
 type Health = {
   status: string;
   mode: string;
@@ -928,12 +931,14 @@ const route = useRoute();
 const router = useRouter();
 const navigation = [
   { id: 'cockpit' as const, label: '智能对话', icon: ChatDotRound },
+  { id: 'workflow' as const, label: '智能体工作流', icon: Connection },
   { id: 'knowledge' as const, label: '知识库', icon: Collection },
   { id: 'reports' as const, label: '数据与报告', icon: DataAnalysis },
   { id: 'settings' as const, label: '模型与 MCP', icon: Setting },
 ];
 const pageDetails: Record<Section, { eyebrow: string; title: string; description: string }> = {
   cockpit: { eyebrow: 'AI COCKPIT', title: '企业智能座舱', description: '基于业务知识、实时工具与 DeepSeek 的可信对话。' },
+  workflow: { eyebrow: 'AGENT RUNTIME', title: '智能体工作流', description: '以智能客服为例，观察工具循环、专家子图与可回放的真实执行事件。' },
   knowledge: { eyebrow: 'KNOWLEDGE', title: '知识库配置', description: '按业务边界管理文档、元数据与向量索引。' },
   reports: { eyebrow: 'OPERATIONS', title: '数据与智能报告', description: '连接只读数据源，生成可复用的分析任务。' },
   settings: { eyebrow: 'RUNTIME', title: '模型与工具', description: '查看模型、MCP 和数据基础设施的运行状态。' },

@@ -191,6 +191,11 @@ def environment(
             "mcp-servers/amap-mcp-server.js"
         ),
         "MCP_REQUEST_TIMEOUT": "30s",
+        "WORKFLOW_DATA_DIR": "/opt/enterprise-ai-cockpit/shared/workflow",
+        "WORKFLOW_MCP_SCRIPT": "/opt/enterprise-ai-cockpit/current/mcp-servers/workflow-mcp-server.js",
+        "WORKFLOW_TOOL_PORT": "18083",
+        "WORKFLOW_MODEL": "deepseek-flash",
+        "WORKFLOW_VISION_MODEL": "deepseek-flash",
         "AMAP_MAPS_API_KEY": amap["api-key"],
         "ACTION_PASSWORD": action_auth["password"],
         "ACTION_TOKEN_SECRET": action_auth["tokenSecret"],

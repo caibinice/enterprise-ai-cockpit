@@ -1,0 +1,10 @@
+{
+  "sha256": "e7d4cece40b01716a29df2dc068f761b92ae23a989c1cefe905a205a4020ed27",
+  "observation": {
+    "visibleText": "Aero Headphones Error code E02 Bluetooth pairing failed. Please reconnect.",
+    "product": "Aero 耳机",
+    "errorCode": "E02",
+    "orderId": "",
+    "summary": "耳机显示蓝牙配对异常E02"
+  }
+}

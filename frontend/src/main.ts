@@ -8,6 +8,7 @@ import './style.css';
 
 const routes = [
   { path: '/', component: App },
+  { path: '/workflow', component: App },
   { path: '/knowledge', component: App },
   { path: '/reports', component: App },
   { path: '/settings', component: App }

@@ -24,3 +24,5 @@ __pycache__/
 .windsurf/
 .roo/
 .aider*
+
+.runtime/
